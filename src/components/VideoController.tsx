@@ -14,29 +14,33 @@ export default function VideoController({ serverIp, serverPort }: VideoControlle
 
   useEffect(() => {
     connectToServer()
-  }, [serverIp, serverPort])
+  }, [serverIp])
 
   const connectToServer = () => {
     try {
+      // WebSocket toujours sur le port 8080 (le serveur WebSocket)
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const wsUrl = `${protocol}//${serverIp}:${serverPort}`
+      const wsUrl = `${protocol}//${serverIp}:8080/ws`
       
+      console.log('Connecting to WebSocket:', wsUrl)
       const ws = new WebSocket(wsUrl)
       wsRef.current = ws
 
       ws.onopen = () => {
-        console.log('Connected to server')
+        console.log('✅ Connected to server')
         setConnected(true)
       }
 
       ws.onerror = (error) => {
-        console.error('WebSocket error:', error)
+        console.error('❌ WebSocket error:', error)
         setConnected(false)
       }
 
       ws.onclose = () => {
-        console.log('Disconnected from server')
+        console.log('❌ Disconnected from server')
         setConnected(false)
+        // Try to reconnect after 3 seconds
+        setTimeout(() => connectToServer(), 3000)
       }
     } catch (error) {
       console.error('Connection failed:', error)
@@ -51,6 +55,7 @@ export default function VideoController({ serverIp, serverPort }: VideoControlle
     }
 
     const msg = { command, value }
+    console.log('📤 Sending command:', msg)
     wsRef.current.send(JSON.stringify(msg))
   }
 

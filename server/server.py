@@ -1,106 +1,87 @@
 #!/usr/bin/env python3
 """
-HTTP + WebSocket server for Video Remote Controller
+HTTP + WebSocket server for Video Remote Controller using aiohttp
 """
 import asyncio
-import os
 import socket
-from pathlib import Path
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from threading import Thread
-import websockets
 import json
+from pathlib import Path
+from aiohttp import web
+import logging
 
 PORT = 8080
-HTTP_PORT = 8000
-WS_PORT = 8080
 
-class VideoControllerHTTPHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        # Serve from dist directory
-        if self.path == '/' or self.path == '/index.html':
-            self.path = '/index.html'
-        
-        # Change to project root to serve dist
-        dist_path = Path('../dist') if Path('../dist').exists() else Path('dist')
-        
-        file_path = dist_path / self.path.lstrip('/')
-        
-        if file_path.exists() and file_path.is_file():
-            content_type = self.get_content_type(str(file_path))
-            
-            with open(file_path, 'rb') as f:
-                self.send_response(200)
-                self.send_header('Content-Type', content_type)
-                self.send_header('Content-Length', file_path.stat().st_size)
-                self.end_headers()
-                self.wfile.write(f.read())
-        else:
-            # Serve index.html for SPA routing
-            index_file = dist_path / 'index.html'
-            if index_file.exists():
-                with open(index_file, 'rb') as f:
-                    content = f.read()
-                self.send_response(200)
-                self.send_header('Content-Type', 'text/html')
-                self.send_header('Content-Length', len(content))
-                self.end_headers()
-                self.wfile.write(content)
-            else:
-                self.send_error(404)
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+logger = logging.getLogger(__name__)
 
-    def get_content_type(self, file_path):
-        if file_path.endswith('.html'):
-            return 'text/html'
-        elif file_path.endswith('.css'):
-            return 'text/css'
-        elif file_path.endswith('.js'):
-            return 'application/javascript'
-        elif file_path.endswith('.json'):
-            return 'application/json'
-        elif file_path.endswith('.png'):
-            return 'image/png'
-        elif file_path.endswith('.jpg') or file_path.endswith('.jpeg'):
-            return 'image/jpeg'
-        elif file_path.endswith('.svg'):
-            return 'image/svg+xml'
-        else:
-            return 'application/octet-stream'
+async def handle_index(request):
+    """Serve index.html for the web app"""
+    dist_path = Path('..')  if Path('../dist').exists() else Path('.')
+    index_file = dist_path / 'dist' / 'index.html'
     
-    def log_message(self, format, *args):
-        # Custom logging
-        print(f'{self.client_address[0]} - - [{self.log_date_time_string()}] {format % args}')
+    if index_file.exists():
+        with open(index_file, 'r') as f:
+            return web.Response(text=f.read(), content_type='text/html')
+    return web.Response(text="404 Not Found", status=404)
 
-async def handle_websocket(websocket, path):
+async def handle_static(request):
+    """Serve static files from dist"""
+    path = request.match_info['path']
+    dist_path = Path('..')  if Path('../dist').exists() else Path('.')
+    file_path = dist_path / 'dist' / path
+    
+    if file_path.exists() and file_path.is_file():
+        content_type = get_content_type(str(file_path))
+        with open(file_path, 'rb') as f:
+            return web.Response(body=f.read(), content_type=content_type)
+    return web.Response(text="404 Not Found", status=404)
+
+def get_content_type(file_path: str) -> str:
+    """Get content type based on file extension"""
+    if file_path.endswith('.html'):
+        return 'text/html'
+    elif file_path.endswith('.css'):
+        return 'text/css'
+    elif file_path.endswith('.js'):
+        return 'application/javascript'
+    elif file_path.endswith('.json'):
+        return 'application/json'
+    elif file_path.endswith('.png'):
+        return 'image/png'
+    elif file_path.endswith('.jpg') or file_path.endswith('.jpeg'):
+        return 'image/jpeg'
+    elif file_path.endswith('.svg'):
+        return 'image/svg+xml'
+    else:
+        return 'application/octet-stream'
+
+async def websocket_handler(request):
     """Handle WebSocket connections"""
-    print(f'✅ WebSocket client connected: {websocket.remote_address}')
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+    
+    logger.info(f'✅ WebSocket client connected: {request.remote}')
+    
     try:
-        async for message in websocket:
-            try:
-                cmd = json.loads(message)
-                print(f'📥 Command received: {cmd}')
-                # Here you can handle the command
-                # For now, just echo back
-                await websocket.send(json.dumps({"status": "ok"}))
-            except json.JSONDecodeError:
-                print(f'❌ Invalid JSON: {message}')
-    except websockets.exceptions.ConnectionClosed:
-        print(f'❌ WebSocket client disconnected: {websocket.remote_address}')
+        async for msg in ws:
+            if msg.type == web.WSMsgType.TEXT:
+                try:
+                    cmd = json.loads(msg.data)
+                    logger.info(f'📥 Command received: {cmd}')
+                    # Echo back confirmation
+                    await ws.send_json({"status": "ok"})
+                except json.JSONDecodeError:
+                    logger.error(f'❌ Invalid JSON: {msg.data}')
+            elif msg.type == web.WSMsgType.ERROR:
+                logger.error(f'❌ WebSocket error: {ws.exception()}')
+    except Exception as e:
+        logger.error(f'❌ Connection error: {e}')
+    finally:
+        logger.info(f'❌ WebSocket client disconnected: {request.remote}')
+    
+    return ws
 
-def start_http_server():
-    """Start HTTP server in a thread"""
-    server_address = ('0.0.0.0', HTTP_PORT)
-    httpd = HTTPServer(server_address, VideoControllerHTTPHandler)
-    print(f'🌐 HTTP server started on port {HTTP_PORT}')
-    httpd.serve_forever()
-
-async def start_websocket_server():
-    """Start WebSocket server"""
-    async with websockets.serve(handle_websocket, '0.0.0.0', WS_PORT):
-        print(f'🔌 WebSocket server started on port {WS_PORT}')
-        await asyncio.Future()  # Run forever
-
-def get_local_ip():
+def get_local_ip() -> str:
     """Get local IP address"""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -111,34 +92,45 @@ def get_local_ip():
     except:
         return "127.0.0.1"
 
-def main():
+async def main():
+    app = web.Application()
+    
+    # Routes
+    app.router.add_get('/', handle_index)
+    app.router.add_get('/ws', websocket_handler)
+    app.router.add_get('/{path:.*}', handle_static)
+    
     ip = get_local_ip()
     
     print(f"""
 ╔════════════════════════════════════════════════════════════╗
-║      📺 Video Remote Controller Server (HTTP + WS)        ║
+║      📺 Video Remote Controller Server (aiohttp)          ║
 ╚════════════════════════════════════════════════════════════╝
 
-✅ Server running on: http://{ip}:{HTTP_PORT}
-🔌 WebSocket on: ws://{ip}:{WS_PORT}
+✅ Server running on: http://{ip}:{PORT}
+🔌 WebSocket on: ws://{ip}:{PORT}/ws
 
 📱 On your phone:
    1. Open browser
-   2. Go to: http://{ip}:{HTTP_PORT}
+   2. Go to: http://{ip}:{PORT}
    3. Make sure you're on the same WiFi!
 
 Press Ctrl+C to stop the server
 """)
     
-    # Start HTTP server in background thread
-    http_thread = Thread(target=start_http_server, daemon=True)
-    http_thread.start()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
     
-    # Start WebSocket server in main thread
+    logger.info(f'🚀 Server started on port {PORT}')
+    
     try:
-        asyncio.run(start_websocket_server())
+        await asyncio.Future()  # Run forever
     except KeyboardInterrupt:
         print("\n\n✋ Server stopped")
+    finally:
+        await runner.cleanup()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
