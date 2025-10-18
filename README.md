@@ -171,6 +171,19 @@ thread::sleep(Duration::from_millis(500 * retry_count))
 - Arrêt propre du listener à la fermeture de l'app
 - Logging détaillé pour debugging (visibles dans la console)
 
+### Mode Production vs Développement
+
+Les protections fonctionnent **identiquement** en dev et production :
+
+| Scénario | Sans Protection | Avec Protection |
+|----------|----------------|----------------|
+| Cmd+Tab en dev | ❌ Crash avec stack trace | ✅ Récupération automatique |
+| Cmd+Tab en production | ❌ Fermeture silencieuse | ✅ Récupération automatique |
+| Événements système | ❌ Panics non gérées | ✅ Capture et retry |
+| Multiples erreurs | ❌ Crash immédiat | ✅ Backoff intelligent |
+
+**Note** : En mode production (build), les logs `eprintln!` peuvent ne pas être visibles dans l'interface, mais l'app continue de fonctionner même en cas d'erreur du listener.
+
 ## Technologies utilisées
 
 - **Tauri** - Framework desktop léger avec protection contre les panics
