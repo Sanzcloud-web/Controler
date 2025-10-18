@@ -6,7 +6,7 @@ interface VideoControllerProps {
   serverPort: number
 }
 
-export default function VideoController({ serverIp, serverPort }: VideoControllerProps) {
+export default function VideoController({ serverIp }: VideoControllerProps) {
   const [connected, setConnected] = useState(false)
   const [volume, setVolume] = useState(100)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -106,7 +106,7 @@ export default function VideoController({ serverIp, serverPort }: VideoControlle
       forwardIntervalRef.current = window.setInterval(() => {
         sendCommand('skipForward')
       }, 200) // Repeat every 200ms
-    }, 150) // Wait 150ms before starting continuous
+    }, 250) // Wait 150ms before starting continuous
   }
 
   const handleSkipForwardEnd = () => {

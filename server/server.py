@@ -40,26 +40,50 @@ def execute_command(cmd: dict):
             logger.info(f'🔊 Volume set to {volume}%')
         
         elif command == 'togglePlayPause':
-            # Send space key to toggle play/pause
-            script = 'tell application "System Events" to key code 49'  # Space key
+            # Send space key to the frontmost application
+            script = '''
+            tell application "System Events"
+                tell process (first application process whose frontmost is true)
+                    key code 49
+                end tell
+            end tell
+            '''
             subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
             logger.info(f'🎬 Play/Pause toggled')
         
         elif command == 'skipForward':
-            # Forward 10s
-            script = 'tell application "System Events" to key code 124 using shift down'  # Shift+Right
+            # Forward 10s - Shift+Right arrow
+            script = '''
+            tell application "System Events"
+                tell process (first application process whose frontmost is true)
+                    key code 124 using shift down
+                end tell
+            end tell
+            '''
             subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
             logger.info(f'⏩ Skip forward')
         
         elif command == 'skipBackward':
-            # Backward 10s
-            script = 'tell application "System Events" to key code 123 using shift down'  # Shift+Left
+            # Backward 10s - Shift+Left arrow
+            script = '''
+            tell application "System Events"
+                tell process (first application process whose frontmost is true)
+                    key code 123 using shift down
+                end tell
+            end tell
+            '''
             subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
             logger.info(f'⏪ Skip backward')
         
         elif command == 'fullscreen':
-            # Toggle fullscreen (F key)
-            script = 'tell application "System Events" to key code 3'  # F key
+            # Toggle fullscreen - F key
+            script = '''
+            tell application "System Events"
+                tell process (first application process whose frontmost is true)
+                    key code 3
+                end tell
+            end tell
+            '''
             subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
             logger.info(f'🖥️ Fullscreen toggled')
         
