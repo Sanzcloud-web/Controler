@@ -5,6 +5,7 @@ HTTP + WebSocket server for Video Remote Controller using aiohttp
 import asyncio
 import socket
 import json
+import subprocess
 from pathlib import Path
 from aiohttp import web
 import logging
@@ -14,6 +15,52 @@ PORT = 8080
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
+def execute_command(cmd: dict):
+    """Execute system commands to control Mac"""
+    command = cmd.get('command')
+    value = cmd.get('value')
+    
+    try:
+        if command == 'setVolume':
+            # Set volume (0-100)
+            volume = max(0, min(100, value))
+            script = f'set volume output volume {volume}'
+            subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
+            logger.info(f'🔊 Volume set to {volume}%')
+        
+        elif command == 'togglePlayPause':
+            # Send space key to toggle play/pause
+            script = 'tell application "System Events" to key code 49'  # Space key
+            subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
+            logger.info(f'🎬 Play/Pause toggled')
+        
+        elif command == 'skipForward':
+            # Forward 10s
+            script = 'tell application "System Events" to key code 124 using shift down'  # Shift+Right
+            subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
+            logger.info(f'⏩ Skip forward')
+        
+        elif command == 'skipBackward':
+            # Backward 10s
+            script = 'tell application "System Events" to key code 123 using shift down'  # Shift+Left
+            subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
+            logger.info(f'⏪ Skip backward')
+        
+        elif command == 'fullscreen':
+            # Toggle fullscreen (F key)
+            script = 'tell application "System Events" to key code 3'  # F key
+            subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
+            logger.info(f'🖥️ Fullscreen toggled')
+        
+        return {"status": "ok"}
+    
+    except subprocess.CalledProcessError as e:
+        logger.error(f'❌ Command failed: {e}')
+        return {"status": "error", "message": str(e)}
+    except Exception as e:
+        logger.error(f'❌ Unexpected error: {e}')
+        return {"status": "error", "message": str(e)}
+
 async def handle_index(request):
     """Serve index.html for the web app"""
     dist_path = Path('..')  if Path('../dist').exists() else Path('.')
@@ -21,6 +68,15 @@ async def handle_index(request):
     
     if index_file.exists():
         with open(index_file, 'r') as f:
+            return web.Response(text=f.read(), content_type='text/html')
+    return web.Response(text="404 Not Found", status=404)
+
+async def handle_video(request):
+    """Serve the video player page"""
+    video_file = Path('../public/video.html')
+    
+    if video_file.exists():
+        with open(video_file, 'r') as f:
             return web.Response(text=f.read(), content_type='text/html')
     return web.Response(text="404 Not Found", status=404)
 
@@ -68,10 +124,15 @@ async def websocket_handler(request):
                 try:
                     cmd = json.loads(msg.data)
                     logger.info(f'📥 Command received: {cmd}')
-                    # Echo back confirmation
-                    await ws.send_json({"status": "ok"})
+                    
+                    # Execute the command
+                    result = execute_command(cmd)
+                    
+                    # Send response back
+                    await ws.send_json(result)
                 except json.JSONDecodeError:
                     logger.error(f'❌ Invalid JSON: {msg.data}')
+                    await ws.send_json({"status": "error", "message": "Invalid JSON"})
             elif msg.type == web.WSMsgType.ERROR:
                 logger.error(f'❌ WebSocket error: {ws.exception()}')
     except Exception as e:
@@ -98,6 +159,7 @@ async def main():
     # Routes
     app.router.add_get('/', handle_index)
     app.router.add_get('/ws', websocket_handler)
+    app.router.add_get('/video', handle_video)
     app.router.add_get('/{path:.*}', handle_static)
     
     ip = get_local_ip()
