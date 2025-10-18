@@ -11,9 +11,23 @@ export default function VideoController({ serverIp, serverPort }: VideoControlle
   const [volume, setVolume] = useState(100)
   const [isPlaying, setIsPlaying] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
+  const forwardIntervalRef = useRef<number | null>(null)
+  const backwardIntervalRef = useRef<number | null>(null)
 
   useEffect(() => {
     connectToServer()
+
+    // Cleanup function to clear intervals on unmount
+    return () => {
+      if (forwardIntervalRef.current) {
+        clearTimeout(forwardIntervalRef.current)
+        clearInterval(forwardIntervalRef.current)
+      }
+      if (backwardIntervalRef.current) {
+        clearTimeout(backwardIntervalRef.current)
+        clearInterval(backwardIntervalRef.current)
+      }
+    }
   }, [serverIp])
 
   const connectToServer = () => {
@@ -69,6 +83,48 @@ export default function VideoController({ serverIp, serverPort }: VideoControlle
     sendCommand('setVolume', value)
   }
 
+  const handleSkipForwardStart = () => {
+    // Send immediate command
+    sendCommand('skipForward')
+
+    // Start continuous sending after 300ms
+    forwardIntervalRef.current = window.setTimeout(() => {
+      forwardIntervalRef.current = window.setInterval(() => {
+        sendCommand('skipForward')
+      }, 500) // Repeat every 500ms
+    }, 300) // Wait 300ms before starting continuous
+  }
+
+  const handleSkipForwardEnd = () => {
+    // Clear all intervals
+    if (forwardIntervalRef.current) {
+      clearTimeout(forwardIntervalRef.current)
+      clearInterval(forwardIntervalRef.current)
+      forwardIntervalRef.current = null
+    }
+  }
+
+  const handleSkipBackwardStart = () => {
+    // Send immediate command
+    sendCommand('skipBackward')
+
+    // Start continuous sending after 300ms
+    backwardIntervalRef.current = window.setTimeout(() => {
+      backwardIntervalRef.current = window.setInterval(() => {
+        sendCommand('skipBackward')
+      }, 500) // Repeat every 500ms
+    }, 300) // Wait 300ms before starting continuous
+  }
+
+  const handleSkipBackwardEnd = () => {
+    // Clear all intervals
+    if (backwardIntervalRef.current) {
+      clearTimeout(backwardIntervalRef.current)
+      clearInterval(backwardIntervalRef.current)
+      backwardIntervalRef.current = null
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Connection Status */}
@@ -97,7 +153,11 @@ export default function VideoController({ serverIp, serverPort }: VideoControlle
       {/* Skip Buttons */}
       <div className="flex gap-4">
         <button
-          onClick={() => sendCommand('skipBackward')}
+          onMouseDown={handleSkipBackwardStart}
+          onMouseUp={handleSkipBackwardEnd}
+          onMouseLeave={handleSkipBackwardEnd}
+          onTouchStart={handleSkipBackwardStart}
+          onTouchEnd={handleSkipBackwardEnd}
           className="flex-1 py-4 px-4 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-lg transition-colors active:scale-95 flex items-center justify-center gap-2"
         >
           <SkipBack size={24} />
@@ -105,7 +165,11 @@ export default function VideoController({ serverIp, serverPort }: VideoControlle
         </button>
 
         <button
-          onClick={() => sendCommand('skipForward')}
+          onMouseDown={handleSkipForwardStart}
+          onMouseUp={handleSkipForwardEnd}
+          onMouseLeave={handleSkipForwardEnd}
+          onTouchStart={handleSkipForwardStart}
+          onTouchEnd={handleSkipForwardEnd}
           className="flex-1 py-4 px-4 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-lg transition-colors active:scale-95 flex items-center justify-center gap-2"
         >
           <SkipForward size={24} />
