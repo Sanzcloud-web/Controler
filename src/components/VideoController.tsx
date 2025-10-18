@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, VolumeUp, Maximize, Circle } from 'lucide-react'
+import { Play, Pause, SkipBack, SkipForward, VolumeX, Volume2, Maximize, Circle } from 'lucide-react'
 
 interface VideoControllerProps {
   serverIp: string
@@ -137,7 +137,7 @@ export default function VideoController({ serverIp, serverPort }: VideoControlle
             onClick={() => handleVolumeChange(Math.min(100, volume + 10))}
             className="flex-1 py-2 px-3 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-lg transition-colors flex items-center justify-center"
           >
-            <VolumeUp size={20} />
+            <Volume2 size={20} />
           </button>
         </div>
       </div>
