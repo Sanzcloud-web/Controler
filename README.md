@@ -144,14 +144,40 @@ L'app détecte automatiquement votre adresse IP locale. Si cela ne fonctionne pa
 2. Vérifiez la console du navigateur pour les erreurs JavaScript
 3. Assurez-vous que la URL du serveur est correcte
 
+## Robustesse et Stabilité
+
+L'application intègre plusieurs mécanismes de protection contre les crashs :
+
+### Gestion des événements système
+- **Protection Cmd+Tab** : Le listener clavier capture les panics et erreurs lors des changements d'application
+- **Récupération automatique** : Système de retry intelligent avec backoff exponentiel
+- **Isolation des erreurs** : Chaque callback clavier est isolé pour éviter la propagation des panics
+- **Désactivation progressive** : Après 5 échecs consécutifs, le listener s'arrête temporairement
+
+### Mécanismes de récupération
+```rust
+// Capture des panics au niveau du listener
+std::panic::catch_unwind(|| listen(keyboard_callback))
+
+// Capture des panics au niveau du callback
+std::panic::catch_unwind(|| execute_keyboard_command())
+
+// Retry avec backoff exponentiel
+thread::sleep(Duration::from_millis(500 * retry_count))
+```
+
+### Gestion du cycle de vie
+- Flag atomique `LISTENER_RUNNING` pour éviter les listeners multiples
+- Arrêt propre du listener à la fermeture de l'app
+- Logging détaillé pour debugging (visibles dans la console)
+
 ## Technologies utilisées
 
-- **Tauri** - Framework desktop léger
+- **Tauri** - Framework desktop léger avec protection contre les panics
 - **React 18** - UI framework
 - **TypeScript** - Langage typé
 - **Tailwind CSS** - Styling utility-first
-- **Tokio** - Runtime async Rust
-- **Tokio-tungstenite** - Serveur WebSocket
+- **rdev** - Listener clavier multiplateforme avec gestion d'erreurs robuste
 - **Vite** - Build tool moderne
 
 ## Licence

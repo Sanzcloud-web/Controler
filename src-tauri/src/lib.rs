@@ -3,7 +3,6 @@ use tauri::AppHandle;
 use std::thread;
 use std::time::Duration;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use rdev::{listen, Event, EventType, Key};
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -86,37 +85,50 @@ async fn start_server(_app: AppHandle) -> Result<ServerInfo, String> {
 }
 
 fn keyboard_callback(event: Event) {
-    match event.event_type {
-        EventType::KeyPress(key) => {
-            match key {
-                Key::F8 => {
-                    // Toggle play/pause
-                    eprintln!("🎬 F8 pressed - Toggle Play/Pause");
-                    let _ = std::process::Command::new("osascript")
-                        .arg("-e")
-                        .arg("tell application \"System Events\" to key code 119")
-                        .output();
+    // Wrap callback in panic handler to prevent crashes
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        match event.event_type {
+            EventType::KeyPress(key) => {
+                match key {
+                    Key::F8 => {
+                        // Toggle play/pause
+                        eprintln!("🎬 F8 pressed - Toggle Play/Pause");
+                        if let Err(e) = std::process::Command::new("osascript")
+                            .arg("-e")
+                            .arg("tell application \"System Events\" to key code 119")
+                            .output() {
+                            eprintln!("Error executing F8 command: {:?}", e);
+                        }
+                    }
+                    Key::F11 => {
+                        // Decrease volume
+                        eprintln!("🔊 F11 pressed - Decrease Volume");
+                        if let Err(e) = std::process::Command::new("osascript")
+                            .arg("-e")
+                            .arg("set volume output volume ((output volume of (get volume settings)) - 10)")
+                            .output() {
+                            eprintln!("Error executing F11 command: {:?}", e);
+                        }
+                    }
+                    Key::F12 => {
+                        // Increase volume
+                        eprintln!("🔉 F12 pressed - Increase Volume");
+                        if let Err(e) = std::process::Command::new("osascript")
+                            .arg("-e")
+                            .arg("set volume output volume ((output volume of (get volume settings)) + 10)")
+                            .output() {
+                            eprintln!("Error executing F12 command: {:?}", e);
+                        }
+                    }
+                    _ => {}
                 }
-                Key::F11 => {
-                    // Decrease volume
-                    eprintln!("🔊 F11 pressed - Decrease Volume");
-                    let _ = std::process::Command::new("osascript")
-                        .arg("-e")
-                        .arg("set volume output volume ((output volume of (get volume settings)) - 10)")
-                        .output();
-                }
-                Key::F12 => {
-                    // Increase volume
-                    eprintln!("🔉 F12 pressed - Increase Volume");
-                    let _ = std::process::Command::new("osascript")
-                        .arg("-e")
-                        .arg("set volume output volume ((output volume of (get volume settings)) + 10)")
-                        .output();
-                }
-                _ => {}
             }
+            _ => {}
         }
-        _ => {}
+    }));
+
+    if let Err(panic_info) = result {
+        eprintln!("Keyboard callback panicked: {:?}", panic_info);
     }
 }
 
