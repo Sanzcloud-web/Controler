@@ -1,31 +1,53 @@
 import { useEffect, useState } from 'react'
+import { Loader } from 'lucide-react'
 import VideoController from './VideoController'
 
 export default function Home() {
   const [connected, setConnected] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [status, setStatus] = useState('Detecting server...')
 
   useEffect(() => {
     // Automatically get IP from browser location
     const serverIp = window.location.hostname
     const serverPort = window.location.port ? parseInt(window.location.port) : 8080
     
+    setStatus(`🔍 Detected: ${serverIp}:${serverPort}`)
+    
+    // Wait a moment then connect
+    setTimeout(() => {
+      setStatus('🔗 Connecting to server...')
+    }, 800)
+
     // Auto-connect
     setTimeout(() => {
+      setStatus('✅ Connected! Launching controller...')
       setConnected(true)
       setLoading(false)
-    }, 500)
+    }, 1800)
   }, [])
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-gray-900 to-black flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-b from-gray-900 to-black flex items-center justify-center p-4">
         <div className="text-center">
-          <div className="text-5xl mb-4">📺</div>
-          <h1 className="text-3xl font-bold text-white mb-4">Connecting...</h1>
-          <div className="animate-pulse text-gray-400">
-            <p>Detecting server...</p>
+          <div className="text-6xl mb-6 animate-bounce">📺</div>
+          <h1 className="text-4xl font-bold text-white mb-2">Video Controller</h1>
+          <p className="text-gray-400 mb-8 text-lg">Smart Remote Control</p>
+          
+          {/* Status Messages */}
+          <div className="space-y-3 max-w-md mx-auto">
+            <div className="flex items-center justify-center gap-3 text-gray-300">
+              <Loader size={20} className="animate-spin" />
+              <p className="text-lg font-medium">{status}</p>
+            </div>
+            
+            <div className="text-xs text-gray-500 mt-6 space-y-1">
+              <p>✓ Auto-detecting network server</p>
+              <p>✓ Establishing connection</p>
+              <p>✓ Initializing remote controls</p>
+            </div>
           </div>
         </div>
       </div>
@@ -39,9 +61,10 @@ export default function Home() {
           {/* Header */}
           <div className="text-center mb-8 mt-6">
             <h1 className="text-3xl font-bold text-white mb-2">Video Controller</h1>
-            <p className="text-gray-400 text-sm">
-              Connected to {window.location.hostname}:{window.location.port || 8080}
+            <p className="text-gray-400 text-sm mb-1">
+              📍 {window.location.hostname}:{window.location.port || 8080}
             </p>
+            <p className="text-xs text-green-400 font-semibold">✅ Ready to control</p>
           </div>
 
           {/* Controller */}
@@ -55,6 +78,7 @@ export default function Home() {
             onClick={() => {
               setConnected(false)
               setLoading(true)
+              setStatus('Detecting server...')
             }}
             className="w-full mt-8 py-3 px-4 bg-gray-800 hover:bg-gray-700 text-gray-300 font-semibold rounded-lg transition-colors"
           >
@@ -68,16 +92,15 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-black flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        {/* Logo/Title */}
         <div className="text-center mb-8">
-          <div className="text-5xl mb-4">📺</div>
+          <div className="text-6xl mb-4">📺</div>
           <h1 className="text-4xl font-bold text-white mb-2">Video Controller</h1>
-          <p className="text-gray-400">Reconnecting...</p>
+          <p className="text-gray-400">Connection Lost</p>
         </div>
 
         {error && (
           <div className="bg-red-900 text-red-100 p-4 rounded-lg mb-4">
-            {error}
+            ⚠️ {error}
           </div>
         )}
 
@@ -85,7 +108,7 @@ export default function Home() {
           onClick={() => window.location.reload()}
           className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors"
         >
-          Reconnect
+          🔄 Reconnect
         </button>
       </div>
     </div>
