@@ -1,40 +1,52 @@
 # Video Remote Controller
 
-Un contrôleur vidéo à distance utilisant Tauri, React et Tailwind CSS. Contrôlez vos films depuis votre téléphone sur le même réseau WiFi que votre Mac.
+Contrôleur vidéo à distance utilisant Python, React et WebSocket. Contrôlez votre Mac depuis votre téléphone sur le même réseau WiFi.
 
 ## Caractéristiques
 
-- **App Mac minimaliste** - Interface épurée avec juste un icône settings
-- **Serveur WebSocket** - Communication temps réel entre votre Mac et votre téléphone
-- **Interface Web Responsive** - Accédez via un navigateur web sur n'importe quel téléphone
+- **Interface Web Responsive** - Accédez via navigateur web sur n'importe quel appareil
+- **Serveur Python WebSocket** - Communication temps réel entre votre Mac et vos appareils
 - **Contrôles complets** - Play/Pause, Volume, Avancer/Reculer, Fullscreen
-- **Affichage du temps** - Voir la progression vidéo et la durée totale
-- **Statut de connexion** - Voir si vous êtes connecté au serveur
+- **Volume synchronisé** - Affiche le volume actuel de votre Mac au démarrage
+- **QR Code** - Connexion rapide via scan QR code
+- **Statut de connexion** - Indicateur visuel de connexion au serveur
 
 ## Architecture
 
 ### Composants
 
-- **App Mac (Tauri)** - Serveur qui écoute les connexions WebSocket
-- **Lecteur vidéo HTML5** - Page avec lecteur vidéo intégré
-- **Interface Web (React)** - Contrôleur responsive pour téléphone
+- **Serveur Python (aiohttp)** - Backend WebSocket qui contrôle macOS
+- **Interface Web (React + Vite)** - Contrôleur responsive pour mobile/desktop
+- **Communication WebSocket** - Temps réel bidirectionnel
 
 ### Flux de données
 
-1. Utilisateur accède à `http://<mac-ip>:8080` depuis son téléphone
-2. Interface de contrôle se charge et se connecte au serveur WebSocket
-3. Clic sur un bouton → commande envoyée au Mac via WebSocket
-4. Le lecteur vidéo reçoit la commande et l'exécute
+1. Serveur Python démarre sur le Mac (port 8080)
+2. Utilisateur accède à `http://<mac-ip>:8080` depuis son téléphone
+3. Interface React se charge et se connecte via WebSocket
+4. Serveur envoie le volume actuel du Mac au client
+5. Commandes envoyées → Serveur Python → macOS via AppleScript
 
 ## Installation
 
 ### Prérequis
 
-- Node.js 16+
-- Rust (pour Tauri)
-- macOS 10.13+
+- **macOS 10.13+**
+- **Python 3.7+**
+- **Node.js 16+**
 
 ### Installation des dépendances
+
+#### Backend Python
+
+```bash
+cd server
+python3 -m venv venv
+source venv/bin/activate
+pip install aiohttp
+```
+
+#### Frontend React
 
 ```bash
 npm install
@@ -42,84 +54,98 @@ npm install
 
 ## Utilisation
 
-### Développement Mac (Tauri)
+### Démarrer le serveur
 
 ```bash
-npm run dev
+npm run server
 ```
 
-Cela démarre l'app Mac en mode développement avec hot reload.
-
-### Production (Build Mac)
+Ou directement :
 
 ```bash
-npm run build
+cd server
+python3 server.py
 ```
 
-L'app compilée sera dans `src-tauri/target/release/`.
-
-### Web (Développement)
-
-Le serveur web est intégré dans l'app Mac. Accédez-y via:
+Le serveur affichera :
 ```
-http://<votre-ip-mac>:8080
+╔════════════════════════════════════════════════════════════╗
+║      📺 Video Remote Controller Server (aiohttp)          ║
+╚════════════════════════════════════════════════════════════╝
+
+✅ Server running on: http://192.168.1.x:8080
+🔌 WebSocket on: ws://192.168.1.x:8080/ws
+
+📱 On your phone:
+   1. Open browser
+   2. Go to: http://192.168.1.x:8080
+   3. Make sure you're on the same WiFi!
+```
+
+### Accéder depuis votre téléphone
+
+1. Assurez-vous d'être sur le **même WiFi** que votre Mac
+2. Ouvrez votre navigateur mobile
+3. Entrez l'URL affichée par le serveur
+4. OU scannez le QR code affiché sur la page d'accueil
+
+### Développement du Frontend
+
+```bash
+npm run dev      # Démarre Vite dev server
+npm run build    # Build production
+npm run preview  # Preview production build
 ```
 
 ## Configuration
 
-### Port du serveur
+### Changer le port
 
-Le port par défaut est **8080**. Pour le changer, éditez `src-tauri/src/lib.rs`:
+Éditez `server/server.py` :
 
-```rust
-let port = 8080u16;  // Changez ce nombre
+```python
+PORT = 8080  # Changez ce nombre
 ```
 
-### Détection IP
+### Commandes vidéo supportées
 
-L'app détecte automatiquement votre adresse IP locale. Si cela ne fonctionne pas correctement, éditez la fonction `get_local_ip()` dans `src-tauri/src/lib.rs`.
+| Commande | Description | Raccourci macOS |
+|----------|-------------|-----------------|
+| `togglePlayPause` | Lecture/Pause | Espace |
+| `setVolume` | Règle le volume (0-100) | - |
+| `skipForward` | Avance de 10s | Shift+→ |
+| `skipBackward` | Recule de 10s | Shift+← |
+| `fullscreen` | Plein écran | F |
 
-## Commandes vidéo supportées
+### Contrôle du volume
 
-| Commande | Description |
-|----------|-------------|
-| `togglePlayPause` | Bascule entre lecture et pause |
-| `play` | Lance la lecture |
-| `pause` | Met en pause |
-| `setVolume` | Règle le volume (0-100) |
-| `increaseVolume` | Augmente le volume de 5% |
-| `decreaseVolume` | Baisse le volume de 5% |
-| `seek` | Avance/recule à un moment spécifique |
-| `skipForward` | Avance de 10 secondes |
-| `skipBackward` | Recule de 10 secondes |
-| `fullscreen` | Bascule le mode plein écran |
+Le serveur Python :
+- ✅ Récupère le volume actuel au démarrage (`get_current_volume()`)
+- ✅ Envoie le volume au client WebSocket lors de la connexion
+- ✅ Permet de modifier le volume via `setVolume`
 
 ## Structure du projet
 
 ```
 .
 ├── src/                          # Frontend React/TypeScript
-│   ├── App.tsx                   # Détecte Tauri vs Web
-│   ├── main.tsx                  # Point d'entrée React
+│   ├── App.tsx                   # Point d'entrée
+│   ├── main.tsx                  # Montage React
 │   ├── index.css                 # Styles Tailwind
 │   └── components/
-│       ├── Settings.tsx          # Panneau settings Mac
-│       ├── Home.tsx              # Page d'accueil web
+│       ├── Home.tsx              # Page d'accueil
 │       └── VideoController.tsx   # Interface de contrôle
 │
-├── src-tauri/                    # Backend Rust Tauri
-│   ├── src/
-│   │   ├── main.rs              # Entry point
-│   │   └── lib.rs               # Serveur WebSocket et logique
-│   ├── Cargo.toml               # Dépendances Rust
-│   └── tauri.conf.json          # Config Tauri
+├── server/                       # Backend Python
+│   ├── server.py                 # Serveur WebSocket aiohttp
+│   └── venv/                     # Environnement virtuel Python
 │
 ├── public/
-│   └── video.html               # Lecteur vidéo HTML5
+│   └── video.html               # Lecteur vidéo (optionnel)
+│
+├── dist/                        # Build frontend (généré)
 │
 ├── tailwind.config.js           # Config Tailwind
-├── postcss.config.js            # Config PostCSS
-├── tsconfig.json                # Config TypeScript
 ├── vite.config.ts               # Config Vite
 └── package.json                 # Dépendances Node
 
@@ -129,69 +155,49 @@ L'app détecte automatiquement votre adresse IP locale. Si cela ne fonctionne pa
 
 ### La connexion ne fonctionne pas
 
-1. Vérifiez que le Mac et le téléphone sont sur le **même réseau WiFi**
-2. Vérifiez que le port 8080 n'est pas bloqué par un pare-feu
-3. Assurez-vous que l'IP est correcte (trouvez-la dans Settings > Server IP)
+1. ✅ Vérifiez que le Mac et le téléphone sont sur le **même réseau WiFi**
+2. ✅ Vérifiez que le port 8080 n'est pas bloqué par le pare-feu macOS
+3. ✅ Assurez-vous que l'IP affichée est correcte
+4. ✅ Testez l'accès depuis le navigateur de votre Mac : `http://localhost:8080`
 
 ### Le serveur ne démarre pas
 
-1. Vérifiez que le port 8080 est disponible
-2. Vérifiez les logs de l'app Mac pour les erreurs
+1. Port déjà utilisé : `lsof -i :8080` pour voir quel processus utilise le port
+2. Python non installé : `python3 --version`
+3. Dépendances manquantes : `pip install aiohttp`
 
-### La vidéo ne respond pas
+### Le volume ne s'affiche pas correctement
 
-1. Vérifiez que le WebSocket est connecté (vert dans l'interface)
-2. Vérifiez la console du navigateur pour les erreurs JavaScript
-3. Assurez-vous que la URL du serveur est correcte
+Le serveur récupère automatiquement le volume macOS au démarrage. Si le volume affiché est incorrect :
 
-## Robustesse et Stabilité
+1. Vérifiez les logs du serveur Python
+2. Testez manuellement : `osascript -e "output volume of (get volume settings)"`
+3. Rechargez la page web
 
-L'application intègre plusieurs mécanismes de protection contre les crashs :
+### WebSocket déconnecté
 
-### Gestion des événements système
-- **Protection Cmd+Tab** : Le listener clavier capture les panics et erreurs lors des changements d'application
-- **Récupération automatique** : Système de retry intelligent avec backoff exponentiel
-- **Isolation des erreurs** : Chaque callback clavier est isolé pour éviter la propagation des panics
-- **Désactivation progressive** : Après 5 échecs consécutifs, le listener s'arrête temporairement
-
-### Mécanismes de récupération
-```rust
-// Capture des panics au niveau du listener
-std::panic::catch_unwind(|| listen(keyboard_callback))
-
-// Capture des panics au niveau du callback
-std::panic::catch_unwind(|| execute_keyboard_command())
-
-// Retry avec backoff exponentiel
-thread::sleep(Duration::from_millis(500 * retry_count))
-```
-
-### Gestion du cycle de vie
-- Flag atomique `LISTENER_RUNNING` pour éviter les listeners multiples
-- Arrêt propre du listener à la fermeture de l'app
-- Logging détaillé pour debugging (visibles dans la console)
-
-### Mode Production vs Développement
-
-Les protections fonctionnent **identiquement** en dev et production :
-
-| Scénario | Sans Protection | Avec Protection |
-|----------|----------------|----------------|
-| Cmd+Tab en dev | ❌ Crash avec stack trace | ✅ Récupération automatique |
-| Cmd+Tab en production | ❌ Fermeture silencieuse | ✅ Récupération automatique |
-| Événements système | ❌ Panics non gérées | ✅ Capture et retry |
-| Multiples erreurs | ❌ Crash immédiat | ✅ Backoff intelligent |
-
-**Note** : En mode production (build), les logs `eprintln!` peuvent ne pas être visibles dans l'interface, mais l'app continue de fonctionner même en cas d'erreur du listener.
+- Icône rouge dans l'interface = déconnecté
+- Vérifiez que le serveur Python est toujours en cours d'exécution
+- Rechargez la page pour reconnecter
 
 ## Technologies utilisées
 
-- **Tauri** - Framework desktop léger avec protection contre les panics
+- **Python 3** - Backend
+- **aiohttp** - Serveur HTTP/WebSocket asynchrone
 - **React 18** - UI framework
 - **TypeScript** - Langage typé
 - **Tailwind CSS** - Styling utility-first
-- **rdev** - Listener clavier multiplateforme avec gestion d'erreurs robuste
-- **Vite** - Build tool moderne
+- **Vite** - Build tool moderne et rapide
+- **lucide-react** - Icônes
+- **qrcode.react** - Génération QR codes
+
+## Sécurité
+
+⚠️ **Ce projet est conçu pour un usage local sur votre réseau privé.**
+
+- Pas d'authentification implémentée
+- Pas de chiffrement (HTTP/WS non sécurisé)
+- Ne pas exposer sur Internet
 
 ## Licence
 
@@ -199,4 +205,5 @@ MIT
 
 ## Auteur
 
-Créé avec ❤️ pour contrôler des films à distance
+Créé avec ❤️ pour contrôler votre Mac à distance
+
