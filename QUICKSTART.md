@@ -4,7 +4,7 @@
 
 ✅ Assurez-vous d'avoir:
 - Node.js installé (`node --version`)
-- Rust installé (`rustc --version`)
+- Python 3 installé (`python3 --version`)
 - Terminal ouvert dans le dossier du projet
 
 ---
@@ -31,24 +31,33 @@ Attendez que ça finisse (20-30 secondes).
 
 ---
 
-## Étape 3: Lancer l'app
+## Étape 3: Lancer le serveur Python
+
+```bash
+python3 server/server.py
+```
+
+Vous devriez voir:
+
+```
+╔════════════════════════════════════════════════════════════╗
+║         📺 Video Remote Controller Server                  ║
+╚════════════════════════════════════════════════════════════╝
+
+✅ Server running on: http://192.168.1.100:8080
+```
+
+---
+
+## Étape 4: Dans un autre terminal - Lancer l'app Mac
+
+Ouvrez un **NOUVEAU terminal** et lancez:
 
 ```bash
 npm run dev
 ```
 
-**Attendez** que vous voyiez ceci dans le terminal:
-```
-✓ Listening on 0.0.0.0:8080
-```
-
----
-
-## Étape 4: Ouvrir les Settings
-
-Une fenêtre devrait s'ouvrir avec l'app Mac.
-
-Cliquez le ⚙️ (settings) en haut à droite.
+Une fenêtre Mac devrait s'ouvrir. Cliquez le ⚙️ (settings) en haut à droite.
 
 ---
 
@@ -115,22 +124,38 @@ Le film devrait réagir quand vous cliquez les boutons.
 ### "Page blanche sur le téléphone"
 - Vérifiez que l'URL est correcte
 - Vérifiez que vous êtes sur le même WiFi
-- Relancez le terminal: `npm run dev`
+- Relancez: `python3 server/server.py`
 
 ### "Les boutons ne font rien"
 - Ouvrez F12 (dev tools) et regardez les erreurs
 - Vérifiez la couleur du statut (vert = connecté)
 
-### "L'app Mac ne démarre pas"
-- Vérifiez que Rust est installé: `rustc --version`
-- Relancez: `npm run dev`
+### "Le serveur Python ne démarre pas"
+- Vérifiez que Python 3 est installé: `python3 --version`
+- Vérifiez que vous êtes dans le bon dossier: `ls dist/`
+- Relancez: `python3 server/server.py`
+
+### "Address already in use" (le port 8080 est pris)
+```bash
+# Tuer les anciens processus
+pkill -f "python3"
+
+# Puis relancer
+python3 server/server.py
+```
 
 ---
 
 ## La prochaine fois
 
-Vous n'avez besoin que de:
+Vous avez besoin de **2 terminaux**:
 
+**Terminal 1** (serveur web):
+```bash
+python3 server/server.py
+```
+
+**Terminal 2** (app Mac):
 ```bash
 npm run dev
 ```
