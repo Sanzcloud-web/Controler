@@ -87,12 +87,12 @@ export default function VideoController({ serverIp, serverPort }: VideoControlle
     // Send immediate command
     sendCommand('skipForward')
 
-    // Start continuous sending after 300ms
+    // Start continuous sending after 150ms
     forwardIntervalRef.current = window.setTimeout(() => {
       forwardIntervalRef.current = window.setInterval(() => {
         sendCommand('skipForward')
-      }, 500) // Repeat every 500ms
-    }, 300) // Wait 300ms before starting continuous
+      }, 200) // Repeat every 200ms
+    }, 150) // Wait 150ms before starting continuous
   }
 
   const handleSkipForwardEnd = () => {
@@ -108,12 +108,12 @@ export default function VideoController({ serverIp, serverPort }: VideoControlle
     // Send immediate command
     sendCommand('skipBackward')
 
-    // Start continuous sending after 300ms
+    // Start continuous sending after 150ms
     backwardIntervalRef.current = window.setTimeout(() => {
       backwardIntervalRef.current = window.setInterval(() => {
         sendCommand('skipBackward')
-      }, 500) // Repeat every 500ms
-    }, 300) // Wait 300ms before starting continuous
+      }, 200) // Repeat every 200ms
+    }, 150) // Wait 150ms before starting continuous
   }
 
   const handleSkipBackwardEnd = () => {
