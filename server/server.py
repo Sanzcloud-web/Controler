@@ -37,7 +37,10 @@ def execute_command(cmd: dict):
             volume = max(0, min(100, value))
             script = f'set volume output volume {volume}'
             subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
-            logger.info(f'🔊 Volume set to {volume}%')
+            # Get the actual volume after setting it
+            actual_volume = get_current_volume()
+            logger.info(f'🔊 Volume set to {actual_volume}%')
+            return {"status": "ok", "volume": actual_volume}
         
         elif command == 'togglePlayPause':
             # Send space key to the frontmost application
@@ -167,9 +170,14 @@ async def websocket_handler(request):
                     
                     # Execute the command
                     result = execute_command(cmd)
-                    
+
                     # Send response back
                     await ws.send_json(result)
+
+                    # If volume was updated, send volumeUpdate message
+                    if result.get('volume') is not None:
+                        await ws.send_json({"type": "volumeUpdate", "volume": result['volume']})
+                        logger.info(f'📤 Sent volume update: {result["volume"]}%')
                 except json.JSONDecodeError:
                     logger.error(f'❌ Invalid JSON: {msg.data}')
                     await ws.send_json({"status": "error", "message": "Invalid JSON"})
