@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { QRCodeSVG } from 'qrcode.react'
 
 interface SettingsProps {
   serverInfo: {
@@ -11,10 +12,11 @@ interface SettingsProps {
 
 export default function Settings({ serverInfo, onClose }: SettingsProps) {
   const [port, setPort] = useState(serverInfo.port)
+  const accessUrl = `http://${serverInfo.ip}:${port}`
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-gray-800 rounded-lg p-6 w-96 shadow-2xl">
+      <div className="bg-gray-800 rounded-lg p-6 w-96 shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold text-white">Settings</h2>
           <button
@@ -80,10 +82,28 @@ export default function Settings({ serverInfo, onClose }: SettingsProps) {
               Access URL
             </label>
             <div className="bg-gray-700 p-3 rounded-lg text-gray-200 font-mono text-xs break-all">
-              http://{serverInfo.ip}:{port}
+              {accessUrl}
             </div>
             <p className="text-xs text-gray-500 mt-2">
               Use this URL to access the controller from your phone
+            </p>
+          </div>
+
+          {/* QR Code */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              📱 QR Code - Scan from phone
+            </label>
+            <div className="bg-white p-3 rounded-lg flex justify-center">
+              <QRCodeSVG 
+                value={accessUrl} 
+                size={150}
+                level="H"
+                includeMargin={true}
+              />
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              Scan this code with your phone's camera to quickly open the controller
             </p>
           </div>
 
@@ -91,10 +111,10 @@ export default function Settings({ serverInfo, onClose }: SettingsProps) {
           <div className="bg-gray-700 p-3 rounded-lg">
             <p className="text-xs text-gray-300 space-y-1">
               <div className="font-semibold mb-2">How to use:</div>
-              <div>1. Note the URL above</div>
-              <div>2. Connect your phone to the same WiFi</div>
-              <div>3. Open the URL in your browser</div>
-              <div>4. Control your video from your phone!</div>
+              <div>1️⃣ Scan the QR code with your phone</div>
+              <div>2️⃣ Or type the URL in your browser</div>
+              <div>3️⃣ Make sure phone is on same WiFi</div>
+              <div>4️⃣ Start controlling your video!</div>
             </p>
           </div>
         </div>
