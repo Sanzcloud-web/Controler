@@ -15,6 +15,17 @@ PORT = 8080
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
+def get_current_volume() -> int:
+    """Get current macOS volume (0-100)"""
+    try:
+        script = 'output volume of (get volume settings)'
+        result = subprocess.run(['osascript', '-e', script], check=True, capture_output=True, text=True)
+        volume = int(result.stdout.strip())
+        return volume
+    except Exception as e:
+        logger.error(f'❌ Failed to get volume: {e}')
+        return 50  # Default fallback
+
 def execute_command(cmd: dict):
     """Execute system commands to control Mac"""
     command = cmd.get('command')
@@ -115,9 +126,14 @@ async def websocket_handler(request):
     """Handle WebSocket connections"""
     ws = web.WebSocketResponse()
     await ws.prepare(request)
-    
+
     logger.info(f'✅ WebSocket client connected: {request.remote}')
-    
+
+    # Send current volume on connection
+    current_volume = get_current_volume()
+    await ws.send_json({"type": "volumeUpdate", "volume": current_volume})
+    logger.info(f'📤 Sent current volume: {current_volume}%')
+
     try:
         async for msg in ws:
             if msg.type == web.WSMsgType.TEXT:

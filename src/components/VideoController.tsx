@@ -45,6 +45,20 @@ export default function VideoController({ serverIp, serverPort }: VideoControlle
         setConnected(true)
       }
 
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          console.log('📥 Received message:', data)
+
+          if (data.type === 'volumeUpdate' && typeof data.volume === 'number') {
+            setVolume(data.volume)
+            console.log('🔊 Volume updated to:', data.volume)
+          }
+        } catch (error) {
+          console.error('❌ Failed to parse message:', error)
+        }
+      }
+
       ws.onerror = (error) => {
         console.error('❌ WebSocket error:', error)
         setConnected(false)
