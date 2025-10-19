@@ -40,6 +40,7 @@ def execute_command(cmd: dict):
             subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
             # Get the actual volume after setting it
             actual_volume = get_current_volume()
+            logger.info(f'🔊 Volume set to {actual_volume}%')
             return {"status": "ok", "volume": actual_volume}
         
         elif command == 'togglePlayPause':
@@ -52,6 +53,7 @@ def execute_command(cmd: dict):
             end tell
             '''
             subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
+            logger.info(f'🎬 Play/Pause toggled')
         
         elif command == 'skipForward':
             # Forward 10s - Shift+Right arrow
@@ -63,6 +65,7 @@ def execute_command(cmd: dict):
             end tell
             '''
             subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
+            logger.info(f'⏩ Skip forward')
         
         elif command == 'skipBackward':
             # Backward 10s - Shift+Left arrow
@@ -74,6 +77,7 @@ def execute_command(cmd: dict):
             end tell
             '''
             subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
+            logger.info(f'⏪ Skip backward')
         
         elif command == 'fullscreen':
             # Toggle fullscreen - F key
@@ -85,14 +89,17 @@ def execute_command(cmd: dict):
             end tell
             '''
             subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
+            logger.info(f'🖥️ Fullscreen toggled')
         
         elif command == 'nextEpisode':
             # Execute next episode script
             execute_episode_script('next')
+            logger.info(f'➡️ Next episode triggered')
         
         elif command == 'prevEpisode':
             # Execute previous episode script
             execute_episode_script('prev')
+            logger.info(f'⬅️ Previous episode triggered')
         
         elif command == 'moveMouse':
             # Move mouse relative to current position
@@ -215,6 +222,7 @@ def inject_javascript(js_code: str):
         end tell
         '''
         subprocess.run(['osascript', '-e', open_script], check=True, capture_output=True)
+        logger.info(f'🔧 DevTools console opened')
         
         import time
         time.sleep(0.3)
@@ -231,6 +239,7 @@ def inject_javascript(js_code: str):
         end tell
         '''
         subprocess.run(['osascript', '-e', paste_script], check=True, capture_output=True)
+        logger.info(f'✅ JavaScript code executed in console')
         
         time.sleep(0.2)
         
@@ -243,6 +252,7 @@ def inject_javascript(js_code: str):
         end tell
         '''
         subprocess.run(['osascript', '-e', close_script], check=True, capture_output=True)
+        logger.info(f'🔧 DevTools console closed')
         
     except Exception as e:
         logger.error(f'❌ Failed to inject JavaScript: {e}')
@@ -333,6 +343,7 @@ async def websocket_handler(request):
     # Send current volume on connection
     current_volume = get_current_volume()
     await ws.send_json({"type": "volumeUpdate", "volume": current_volume})
+    logger.info(f'📤 Sent current volume: {current_volume}%')
 
     try:
         async for msg in ws:
@@ -349,6 +360,7 @@ async def websocket_handler(request):
                     # If volume was updated, send volumeUpdate message
                     if result.get('volume') is not None:
                         await ws.send_json({"type": "volumeUpdate", "volume": result['volume']})
+                        logger.info(f'📤 Sent volume update: {result["volume"]}%')
                 except json.JSONDecodeError:
                     logger.error(f'❌ Invalid JSON: {msg.data}')
                     await ws.send_json({"status": "error", "message": "Invalid JSON"})

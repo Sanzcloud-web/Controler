@@ -57,9 +57,9 @@ export default function MouseController({ serverIp }: MouseControllerProps) {
   }
 
   const handleJoystickMove = (event: any) => {
-    // Send movement every 16ms (~60fps) for ultra smooth motion
+    // Send movement every 50ms to avoid spam
     const now = Date.now()
-    if (now - lastSendTime.current > 16) {
+    if (now - lastSendTime.current > 50) {
       // Invert Y axis and apply sensitivity
       let moveX = event.x ? Math.round(event.x * sensitivity) : 0
       let moveY = event.y ? Math.round(-event.y * sensitivity) : 0 // Inverse Y (- sign)
@@ -113,7 +113,7 @@ export default function MouseController({ serverIp }: MouseControllerProps) {
             stickColor="rgba(59, 130, 246, 1)"
             move={handleJoystickMove}
             stop={handleJoystickStop}
-            throttle={20}
+            throttle={50}
           />
         </div>
         <p className="text-xs text-gray-400 text-center">
