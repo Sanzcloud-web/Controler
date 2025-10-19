@@ -131,7 +131,7 @@ def execute_command(cmd: dict):
 def execute_episode_script(direction: str):
     """Execute episode navigation script via JavaScript injection"""
     try:
-        # Step 1: Execute the appropriate episode change script
+        # Step 1: Prepare the episode change script
         if direction == 'next':
             episode_script = """(() => {
   try {
@@ -181,14 +181,7 @@ def execute_episode_script(direction: str):
   }
 })();"""
         
-        # Step 2: Inject JavaScript in the browser via AppleScript
-        inject_javascript(episode_script)
-        
-        # Small delay for the script to execute
-        import time
-        time.sleep(0.5)
-        
-        # Step 3: Execute fullscreen script
+        # Step 2: Prepare fullscreen script
         fullscreen_script = """(() => {
   const el =
     document.getElementById('videoFrame') ||
@@ -205,7 +198,11 @@ def execute_episode_script(direction: str):
   else console.warn('Fullscreen API indisponible sur cet élément.');
 })();"""
         
-        inject_javascript(fullscreen_script)
+        # Step 3: Combine both scripts
+        combined_script = episode_script + "\n" + fullscreen_script
+        
+        # Step 4: Inject both scripts at once (open console once, execute both, close console once)
+        inject_javascript(combined_script)
         
     except Exception as e:
         logger.error(f'❌ Episode script execution failed: {e}')
