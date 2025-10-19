@@ -19,5 +19,5 @@
      4. Ferme la console (Cmd+Option+J)
 
 3. **`simulate_center_click()`**
-   - Simule un clic souris au centre de l'écran (960, 540)
+   - Simule un **double-clic** souris au centre de l'écran (960, 540)
    - Lance la lecture vidéo

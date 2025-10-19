@@ -244,17 +244,19 @@ def inject_javascript(js_code: str):
         logger.error(f'❌ Failed to inject JavaScript: {e}')
 
 def simulate_center_click():
-    """Simulate a mouse click at the center of the screen"""
+    """Simulate a double click at the center of the screen to play video"""
     try:
         script = '''
         tell application "System Events"
             click at {960, 540}
+            delay 0.2
+            click at {960, 540}
         end tell
         '''
         subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
-        logger.info(f'🖱️ Center click simulated')
+        logger.info(f'🖱️ Double click simulated at center (960, 540) - two clicks with 0.2s delay')
     except Exception as e:
-        logger.error(f'❌ Failed to simulate click: {e}')
+        logger.error(f'❌ Failed to simulate double click: {e}')
 
 async def handle_index(request):
     """Serve index.html for the web app"""
