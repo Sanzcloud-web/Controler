@@ -90,6 +90,16 @@ def execute_command(cmd: dict):
             subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
             logger.info(f'🖥️ Fullscreen toggled')
         
+        elif command == 'nextEpisode':
+            # Execute next episode script
+            execute_episode_script('next')
+            logger.info(f'➡️ Next episode triggered')
+        
+        elif command == 'prevEpisode':
+            # Execute previous episode script
+            execute_episode_script('prev')
+            logger.info(f'⬅️ Previous episode triggered')
+        
         return {"status": "ok"}
     
     except subprocess.CalledProcessError as e:
@@ -98,6 +108,153 @@ def execute_command(cmd: dict):
     except Exception as e:
         logger.error(f'❌ Unexpected error: {e}')
         return {"status": "error", "message": str(e)}
+
+def execute_episode_script(direction: str):
+    """Execute episode navigation script via JavaScript injection"""
+    try:
+        # Step 1: Execute the appropriate episode change script
+        if direction == 'next':
+            episode_script = """(() => {
+  try {
+    const modal = document.getElementById('videoModal');
+    const wasOpen = modal && modal.classList.contains('active');
+
+    if (typeof window.changeEpisode === 'function') {
+      window.changeEpisode('next');
+    } else {
+      document.getElementById('modalNextEpisodeBtn')?.click();
+    }
+
+    if (!wasOpen && typeof window.openVideoModal === 'function') {
+      window.openVideoModal();
+    }
+
+    const s = window.currentSeason, e = window.currentEpisode;
+    if (s != null && e != null) {
+      console.log(`➡️ Épisode actuel: S${String(s).padStart(2,'0')}E${String(e).padStart(2,'0')}`);
+    }
+  } catch (err) {
+    console.error('NEXT snippet error:', err);
+  }
+})();"""
+        else:  # prev
+            episode_script = """(() => {
+  try {
+    const modal = document.getElementById('videoModal');
+    const wasOpen = modal && modal.classList.contains('active');
+
+    if (typeof window.changeEpisode === 'function') {
+      window.changeEpisode('prev');
+    } else {
+      document.getElementById('modalPrevEpisodeBtn')?.click();
+    }
+
+    if (!wasOpen && typeof window.openVideoModal === 'function') {
+      window.openVideoModal();
+    }
+
+    const s = window.currentSeason, e = window.currentEpisode;
+    if (s != null && e != null) {
+      console.log(`⬅️ Épisode actuel: S${String(s).padStart(2,'0')}E${String(e).padStart(2,'0')}`);
+    }
+  } catch (err) {
+    console.error('PREV snippet error:', err);
+  }
+})();"""
+        
+        # Step 2: Inject JavaScript in the browser via AppleScript
+        inject_javascript(episode_script)
+        
+        # Small delay for the script to execute
+        import time
+        time.sleep(0.5)
+        
+        # Step 3: Execute fullscreen script
+        fullscreen_script = """(() => {
+  const el =
+    document.getElementById('videoFrame') ||
+    document.getElementById('videoModal') ||
+    document.documentElement;
+
+  const req =
+    el.requestFullscreen ||
+    el.webkitRequestFullscreen ||
+    el.mozRequestFullScreen ||
+    el.msRequestFullscreen;
+
+  if (req) req.call(el);
+  else console.warn('Fullscreen API indisponible sur cet élément.');
+})();"""
+        
+        inject_javascript(fullscreen_script)
+        
+        # Step 4: Simulate click at center of screen
+        import time
+        time.sleep(0.3)
+        simulate_center_click()
+        
+    except Exception as e:
+        logger.error(f'❌ Episode script execution failed: {e}')
+
+def inject_javascript(js_code: str):
+    """Inject JavaScript code into the browser using DevTools console"""
+    try:
+        # Step 1: Open DevTools console (Cmd+Option+J)
+        open_script = '''
+        tell application "System Events"
+            tell process (first application process whose frontmost is true)
+                keystroke "j" using {command down, option down}
+            end tell
+        end tell
+        '''
+        subprocess.run(['osascript', '-e', open_script], check=True, capture_output=True)
+        logger.info(f'🔧 DevTools console opened')
+        
+        import time
+        time.sleep(0.3)
+        
+        # Step 2: Paste and execute the JavaScript code
+        paste_script = f'''
+        tell application "System Events"
+            set the clipboard to "{js_code.replace('"', '\\\\"')}"
+            tell process (first application process whose frontmost is true)
+                keystroke "v" using command down
+                delay 0.1
+                key code 36
+            end tell
+        end tell
+        '''
+        subprocess.run(['osascript', '-e', paste_script], check=True, capture_output=True)
+        logger.info(f'✅ JavaScript code executed in console')
+        
+        time.sleep(0.2)
+        
+        # Step 3: Close DevTools console (Cmd+Option+J)
+        close_script = '''
+        tell application "System Events"
+            tell process (first application process whose frontmost is true)
+                keystroke "j" using {command down, option down}
+            end tell
+        end tell
+        '''
+        subprocess.run(['osascript', '-e', close_script], check=True, capture_output=True)
+        logger.info(f'🔧 DevTools console closed')
+        
+    except Exception as e:
+        logger.error(f'❌ Failed to inject JavaScript: {e}')
+
+def simulate_center_click():
+    """Simulate a mouse click at the center of the screen"""
+    try:
+        script = '''
+        tell application "System Events"
+            click at {960, 540}
+        end tell
+        '''
+        subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
+        logger.info(f'🖱️ Center click simulated')
+    except Exception as e:
+        logger.error(f'❌ Failed to simulate click: {e}')
 
 async def handle_index(request):
     """Serve index.html for the web app"""

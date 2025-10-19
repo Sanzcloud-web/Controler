@@ -139,6 +139,14 @@ export default function VideoController({ serverIp }: VideoControllerProps) {
     }
   }
 
+  const handleNextEpisode = () => {
+    sendCommand('nextEpisode')
+  }
+
+  const handlePrevEpisode = () => {
+    sendCommand('prevEpisode')
+  }
+
   return (
     <div className="space-y-6">
       {/* Connection Status */}
@@ -188,6 +196,25 @@ export default function VideoController({ serverIp }: VideoControllerProps) {
         >
           <SkipForward size={24} />
           <div className="text-xs">10s</div>
+        </button>
+      </div>
+
+      {/* Episode Navigation Buttons */}
+      <div className="flex gap-4">
+        <button
+          onClick={handlePrevEpisode}
+          className="flex-1 py-4 px-4 bg-orange-600 hover:bg-orange-700 text-white font-semibold rounded-lg transition-colors active:scale-95 flex items-center justify-center gap-2"
+        >
+          <SkipBack size={20} />
+          <span>Épisode Précédent</span>
+        </button>
+
+        <button
+          onClick={handleNextEpisode}
+          className="flex-1 py-4 px-4 bg-orange-600 hover:bg-orange-700 text-white font-semibold rounded-lg transition-colors active:scale-95 flex items-center justify-center gap-2"
+        >
+          <span>Épisode Suivant</span>
+          <SkipForward size={20} />
         </button>
       </div>
 
