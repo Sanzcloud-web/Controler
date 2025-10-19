@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 from aiohttp import web
 import logging
+import pyautogui
 
 PORT = 8080
 
@@ -100,6 +101,27 @@ def execute_command(cmd: dict):
             execute_episode_script('prev')
             logger.info(f'⬅️ Previous episode triggered')
         
+        elif command == 'moveMouse':
+            # Move mouse relative to current position
+            dx = int(cmd.get('dx', 0))
+            dy = int(cmd.get('dy', 0))
+            move_mouse(dx, dy)
+            logger.info(f'🖱️ Mouse moved: dx={dx}, dy={dy}')
+        
+        elif command == 'mouseLeftClick':
+            # Left click
+            mouse_left_click()
+            logger.info(f'🖱️ Left click')
+        
+        elif command == 'mouseRightClick':
+            # Right click
+            mouse_right_click()
+            logger.info(f'🖱️ Right click')
+        
+        elif command == 'resetMouse':
+            # Reset mouse to center
+            logger.info(f'🖱️ Mouse reset')
+        
         return {"status": "ok"}
     
     except subprocess.CalledProcessError as e:
@@ -188,11 +210,6 @@ def execute_episode_script(direction: str):
         
         inject_javascript(fullscreen_script)
         
-        # Step 4: Simulate click at center of screen
-        import time
-        time.sleep(0.3)
-        simulate_center_click()
-        
     except Exception as e:
         logger.error(f'❌ Episode script execution failed: {e}')
 
@@ -243,20 +260,34 @@ def inject_javascript(js_code: str):
     except Exception as e:
         logger.error(f'❌ Failed to inject JavaScript: {e}')
 
-def simulate_center_click():
-    """Simulate a double click at the center of the screen to play video"""
+def move_mouse(dx: int, dy: int):
+    """Move mouse relative to current position using PyAutoGUI"""
     try:
-        script = '''
-        tell application "System Events"
-            click at {960, 540}
-            delay 0.2
-            click at {960, 540}
-        end tell
-        '''
-        subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
-        logger.info(f'🖱️ Double click simulated at center (960, 540) - two clicks with 0.2s delay')
+        current_x, current_y = pyautogui.position()
+        new_x = current_x + dx
+        new_y = current_y + dy
+        pyautogui.moveTo(new_x, new_y, duration=0.05)
+        logger.info(f'🖱️ Mouse moved by ({dx}, {dy}) to ({new_x}, {new_y})')
     except Exception as e:
-        logger.error(f'❌ Failed to simulate double click: {e}')
+        logger.error(f'❌ Failed to move mouse: {e}')
+
+
+def mouse_left_click():
+    """Simulate a left mouse click using PyAutoGUI"""
+    try:
+        pyautogui.click()
+        logger.info(f'🖱️ Left click performed')
+    except Exception as e:
+        logger.error(f'❌ Failed to perform left click: {e}')
+
+
+def mouse_right_click():
+    """Simulate a right mouse click using PyAutoGUI"""
+    try:
+        pyautogui.rightClick()
+        logger.info(f'🖱️ Right click performed')
+    except Exception as e:
+        logger.error(f'❌ Failed to perform right click: {e}')
 
 async def handle_index(request):
     """Serve index.html for the web app"""

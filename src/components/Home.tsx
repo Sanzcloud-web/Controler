@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Loader } from 'lucide-react'
 import VideoController from './VideoController'
+import MouseController from './MouseController'
 
 export default function Home() {
   const [connected, setConnected] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [status, setStatus] = useState('Detecting server...')
+  const [activeTab, setActiveTab] = useState<'video' | 'mouse'>('video')
 
   useEffect(() => {
     // Automatically get IP from browser location
@@ -33,8 +35,8 @@ export default function Home() {
       <div className="min-h-screen bg-gradient-to-b from-gray-900 to-black flex items-center justify-center p-4">
         <div className="text-center">
           <div className="text-6xl mb-6 animate-bounce">📺</div>
-          <h1 className="text-4xl font-bold text-white mb-2">Video Controller</h1>
-          <p className="text-gray-400 mb-8 text-lg">Smart Remote Control</p>
+          <h1 className="text-4xl font-bold text-white mb-2">Smart Remote</h1>
+          <p className="text-gray-400 mb-8 text-lg">Video & Mouse Control</p>
           
           {/* Status Messages */}
           <div className="space-y-3 max-w-md mx-auto">
@@ -60,18 +62,49 @@ export default function Home() {
         <div className="max-w-md mx-auto">
           {/* Header */}
           <div className="text-center mb-8 mt-6">
-            <h1 className="text-3xl font-bold text-white mb-2">Video Controller</h1>
+            <h1 className="text-3xl font-bold text-white mb-2">Smart Remote</h1>
             <p className="text-gray-400 text-sm mb-1">
               📍 {window.location.hostname}:{window.location.port || 8080}
             </p>
             <p className="text-xs text-green-400 font-semibold">✅ Ready to control</p>
           </div>
 
-          {/* Controller */}
-          <VideoController 
-            serverIp={window.location.hostname} 
-            serverPort={window.location.port ? parseInt(window.location.port) : 8080}
-          />
+          {/* Tabs */}
+          <div className="flex gap-2 mb-6 bg-gray-800 p-1 rounded-lg">
+            <button
+              onClick={() => setActiveTab('video')}
+              className={`flex-1 py-2 px-4 rounded transition-colors font-semibold ${
+                activeTab === 'video'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              📺 Vidéo
+            </button>
+            <button
+              onClick={() => setActiveTab('mouse')}
+              className={`flex-1 py-2 px-4 rounded transition-colors font-semibold ${
+                activeTab === 'mouse'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              🖱️ Souris
+            </button>
+          </div>
+
+          {/* Controllers */}
+          {activeTab === 'video' && (
+            <VideoController 
+              serverIp={window.location.hostname} 
+              serverPort={window.location.port ? parseInt(window.location.port) : 8080}
+            />
+          )}
+          {activeTab === 'mouse' && (
+            <MouseController 
+              serverIp={window.location.hostname}
+            />
+          )}
 
           {/* Disconnect Button */}
           <button
@@ -94,7 +127,7 @@ export default function Home() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="text-6xl mb-4">📺</div>
-          <h1 className="text-4xl font-bold text-white mb-2">Video Controller</h1>
+          <h1 className="text-4xl font-bold text-white mb-2">Smart Remote</h1>
           <p className="text-gray-400">Connection Lost</p>
         </div>
 
