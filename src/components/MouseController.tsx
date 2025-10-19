@@ -134,7 +134,7 @@ export default function MouseController({ serverIp }: MouseControllerProps) {
         <input
           type="range"
           min="0.3"
-          max="3"
+          max="20"
           step="0.1"
           value={sensitivity}
           onChange={(e) => setSensitivity(parseFloat(e.target.value))}
