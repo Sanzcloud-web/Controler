@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Joystick } from 'react-joystick-component'
-import { RotateCcw } from 'lucide-react'
+import { RotateCcw, Zap } from 'lucide-react'
 
 interface MouseControllerProps {
   serverIp: string
@@ -8,6 +8,7 @@ interface MouseControllerProps {
 
 export default function MouseController({ serverIp }: MouseControllerProps) {
   const [connected, setConnected] = useState(false)
+  const [sensitivity, setSensitivity] = useState(1) // 0.5x to 3x
   const wsRef = useRef<WebSocket | null>(null)
   const lastSendTime = useRef<number>(0)
 
@@ -59,11 +60,12 @@ export default function MouseController({ serverIp }: MouseControllerProps) {
     // Send movement every 50ms to avoid spam
     const now = Date.now()
     if (now - lastSendTime.current > 50) {
-      const moveX = event.x ? Math.round(event.x) : 0
-      const moveY = event.y ? Math.round(event.y) : 0
+      // Invert Y axis and apply sensitivity
+      let moveX = event.x ? Math.round(event.x * sensitivity) : 0
+      let moveY = event.y ? Math.round(-event.y * sensitivity) : 0 // Inverse Y (- sign)
 
       if (moveX !== 0 || moveY !== 0) {
-        console.log(`🎮 Joystick move: x=${moveX}, y=${moveY}`)
+        console.log(`🎮 Joystick move: x=${moveX}, y=${moveY} (sensitivity: ${sensitivity}x)`)
         sendCommand('moveMouse', { dx: moveX, dy: moveY })
         lastSendTime.current = now
       }
@@ -117,6 +119,33 @@ export default function MouseController({ serverIp }: MouseControllerProps) {
         <p className="text-xs text-gray-400 text-center">
           Drag pour bouger la souris 👆
         </p>
+      </div>
+
+      {/* Sensitivity Control */}
+      <div className="space-y-3 bg-gray-800 p-4 rounded-lg">
+        <div className="flex items-center justify-between">
+          <label className="text-sm font-medium text-gray-300 flex items-center gap-2">
+            <Zap size={18} />
+            Vitesse
+          </label>
+          <span className="text-sm font-bold text-blue-400">{sensitivity.toFixed(1)}x</span>
+        </div>
+        
+        <input
+          type="range"
+          min="0.3"
+          max="3"
+          step="0.1"
+          value={sensitivity}
+          onChange={(e) => setSensitivity(parseFloat(e.target.value))}
+          className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+        />
+        
+        <div className="flex justify-between text-xs text-gray-500">
+          <span>Lent</span>
+          <span>Normal</span>
+          <span>Rapide</span>
+        </div>
       </div>
 
       {/* Click Buttons */}
