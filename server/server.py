@@ -40,7 +40,6 @@ def execute_command(cmd: dict):
             subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
             # Get the actual volume after setting it
             actual_volume = get_current_volume()
-            logger.info(f'🔊 Volume set to {actual_volume}%')
             return {"status": "ok", "volume": actual_volume}
         
         elif command == 'togglePlayPause':
@@ -53,7 +52,6 @@ def execute_command(cmd: dict):
             end tell
             '''
             subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
-            logger.info(f'🎬 Play/Pause toggled')
         
         elif command == 'skipForward':
             # Forward 10s - Shift+Right arrow
@@ -65,7 +63,6 @@ def execute_command(cmd: dict):
             end tell
             '''
             subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
-            logger.info(f'⏩ Skip forward')
         
         elif command == 'skipBackward':
             # Backward 10s - Shift+Left arrow
@@ -77,7 +74,6 @@ def execute_command(cmd: dict):
             end tell
             '''
             subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
-            logger.info(f'⏪ Skip backward')
         
         elif command == 'fullscreen':
             # Toggle fullscreen - F key
@@ -89,38 +85,32 @@ def execute_command(cmd: dict):
             end tell
             '''
             subprocess.run(['osascript', '-e', script], check=True, capture_output=True)
-            logger.info(f'🖥️ Fullscreen toggled')
         
         elif command == 'nextEpisode':
             # Execute next episode script
             execute_episode_script('next')
-            logger.info(f'➡️ Next episode triggered')
         
         elif command == 'prevEpisode':
             # Execute previous episode script
             execute_episode_script('prev')
-            logger.info(f'⬅️ Previous episode triggered')
         
         elif command == 'moveMouse':
             # Move mouse relative to current position
             dx = int(cmd.get('dx', 0))
             dy = int(cmd.get('dy', 0))
             move_mouse(dx, dy)
-            logger.info(f'🖱️ Mouse moved: dx={dx}, dy={dy}')
         
         elif command == 'mouseLeftClick':
             # Left click
             mouse_left_click()
-            logger.info(f'🖱️ Left click')
         
         elif command == 'mouseRightClick':
             # Right click
             mouse_right_click()
-            logger.info(f'🖱️ Right click')
         
         elif command == 'resetMouse':
             # Reset mouse to center
-            logger.info(f'🖱️ Mouse reset')
+            pass
         
         return {"status": "ok"}
     
@@ -225,7 +215,6 @@ def inject_javascript(js_code: str):
         end tell
         '''
         subprocess.run(['osascript', '-e', open_script], check=True, capture_output=True)
-        logger.info(f'🔧 DevTools console opened')
         
         import time
         time.sleep(0.3)
@@ -242,7 +231,6 @@ def inject_javascript(js_code: str):
         end tell
         '''
         subprocess.run(['osascript', '-e', paste_script], check=True, capture_output=True)
-        logger.info(f'✅ JavaScript code executed in console')
         
         time.sleep(0.2)
         
@@ -255,7 +243,6 @@ def inject_javascript(js_code: str):
         end tell
         '''
         subprocess.run(['osascript', '-e', close_script], check=True, capture_output=True)
-        logger.info(f'🔧 DevTools console closed')
         
     except Exception as e:
         logger.error(f'❌ Failed to inject JavaScript: {e}')
@@ -267,7 +254,6 @@ def move_mouse(dx: int, dy: int):
         new_x = current_x + dx
         new_y = current_y + dy
         pyautogui.moveTo(new_x, new_y, duration=0.05)
-        logger.info(f'🖱️ Mouse moved by ({dx}, {dy}) to ({new_x}, {new_y})')
     except Exception as e:
         logger.error(f'❌ Failed to move mouse: {e}')
 
@@ -276,7 +262,6 @@ def mouse_left_click():
     """Simulate a left mouse click using PyAutoGUI"""
     try:
         pyautogui.click()
-        logger.info(f'🖱️ Left click performed')
     except Exception as e:
         logger.error(f'❌ Failed to perform left click: {e}')
 
@@ -285,7 +270,6 @@ def mouse_right_click():
     """Simulate a right mouse click using PyAutoGUI"""
     try:
         pyautogui.rightClick()
-        logger.info(f'🖱️ Right click performed')
     except Exception as e:
         logger.error(f'❌ Failed to perform right click: {e}')
 
@@ -349,14 +333,12 @@ async def websocket_handler(request):
     # Send current volume on connection
     current_volume = get_current_volume()
     await ws.send_json({"type": "volumeUpdate", "volume": current_volume})
-    logger.info(f'📤 Sent current volume: {current_volume}%')
 
     try:
         async for msg in ws:
             if msg.type == web.WSMsgType.TEXT:
                 try:
                     cmd = json.loads(msg.data)
-                    logger.info(f'📥 Command received: {cmd}')
                     
                     # Execute the command
                     result = execute_command(cmd)
@@ -367,7 +349,6 @@ async def websocket_handler(request):
                     # If volume was updated, send volumeUpdate message
                     if result.get('volume') is not None:
                         await ws.send_json({"type": "volumeUpdate", "volume": result['volume']})
-                        logger.info(f'📤 Sent volume update: {result["volume"]}%')
                 except json.JSONDecodeError:
                     logger.error(f'❌ Invalid JSON: {msg.data}')
                     await ws.send_json({"status": "error", "message": "Invalid JSON"})
