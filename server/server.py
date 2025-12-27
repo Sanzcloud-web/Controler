@@ -54,10 +54,12 @@ class ScreenStreamer:
         self.fps = fps
         self.quality = quality
         self.running = False
-        self.sct = mss.mss()
+        # with_cursor=True captures the mouse pointer (MSS 8.0+)
+        self.sct = mss.mss(with_cursor=True)
         self.monitor = self.sct.monitors[1]  # Primary monitor
         self.frame_count = 0
         self.start_time = None
+        self.use_binary = True  # Binary frames are faster than base64
 
     async def start(self):
         """Start streaming."""
@@ -65,35 +67,39 @@ class ScreenStreamer:
         self.start_time = time.time()
         frame_interval = 1.0 / self.fps
 
-        logger.info(f"📺 Starting stream: {self.width}x{self.height} @ {self.fps}fps")
+        logger.info(f"📺 Starting stream: {self.width}x{self.height} @ {self.fps}fps (cursor visible)")
 
         try:
             while self.running:
                 frame_start = time.time()
 
-                # Capture screen
+                # Capture screen (with cursor)
                 screenshot = self.sct.grab(self.monitor)
 
                 # Convert to PIL Image
                 img = Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
 
-                # Resize if needed
+                # Resize if needed - use BILINEAR for speed (LANCZOS is slow)
                 if img.width != self.width or img.height != self.height:
-                    img = img.resize((self.width, self.height), Image.Resampling.LANCZOS)
+                    img = img.resize((self.width, self.height), Image.Resampling.BILINEAR)
 
-                # Encode as JPEG
+                # Encode as JPEG (no optimize=True for speed)
                 buffer = io.BytesIO()
-                img.save(buffer, format='JPEG', quality=self.quality, optimize=True)
-                frame_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                img.save(buffer, format='JPEG', quality=self.quality)
+                frame_bytes = buffer.getvalue()
 
-                # Send frame
+                # Send frame as binary (faster than base64 JSON)
                 try:
-                    await self.ws.send_json({
-                        "type": "frame",
-                        "data": frame_data,
-                        "timestamp": time.time(),
-                        "frame": self.frame_count
-                    })
+                    if self.use_binary:
+                        await self.ws.send_bytes(frame_bytes)
+                    else:
+                        frame_data = base64.b64encode(frame_bytes).decode('utf-8')
+                        await self.ws.send_json({
+                            "type": "frame",
+                            "data": frame_data,
+                            "timestamp": time.time(),
+                            "frame": self.frame_count
+                        })
                 except Exception as e:
                     logger.error(f"Failed to send frame: {e}")
                     break

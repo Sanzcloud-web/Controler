@@ -11,6 +11,7 @@ import {
   MousePointer,
   MousePointerClick,
   Settings,
+  X,
 } from "lucide-react";
 
 interface ScreenMirrorProps {
@@ -27,6 +28,7 @@ export default function ScreenMirror({
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("disconnected");
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false); // CSS fullscreen for iOS
   const [sensitivity, setSensitivity] = useState(15);
   const [showControls, setShowControls] = useState(true);
   const [stats, setStats] = useState({ fps: 0, frames: 0 });
@@ -39,6 +41,7 @@ export default function ScreenMirror({
   const lastSendTime = useRef<number>(0);
   const frameCountRef = useRef(0);
   const startTimeRef = useRef<number | null>(null);
+  const blobUrlRef = useRef<string | null>(null); // For binary frame URLs
 
   // Build screen server WebSocket URL (uses /screen endpoint on same server)
   const getScreenWsUrl = useCallback(() => {
@@ -80,7 +83,36 @@ export default function ScreenMirror({
         ws.send(JSON.stringify({ command: "auth", password }));
       };
 
+      ws.binaryType = "blob"; // Receive binary frames as Blob
+
       ws.onmessage = (event) => {
+        // Handle binary frames (JPEG images)
+        if (event.data instanceof Blob) {
+          // Revoke previous blob URL to prevent memory leak
+          if (blobUrlRef.current) {
+            URL.revokeObjectURL(blobUrlRef.current);
+          }
+          // Create new blob URL and display
+          const url = URL.createObjectURL(event.data);
+          blobUrlRef.current = url;
+          if (imgRef.current) {
+            imgRef.current.src = url;
+          }
+          frameCountRef.current++;
+
+          // Update FPS stats
+          if (startTimeRef.current) {
+            const elapsed = (Date.now() - startTimeRef.current) / 1000;
+            const fps = frameCountRef.current / elapsed;
+            setStats({
+              fps: Math.round(fps),
+              frames: frameCountRef.current,
+            });
+          }
+          return;
+        }
+
+        // Handle JSON messages
         try {
           const data = JSON.parse(event.data);
 
@@ -112,7 +144,7 @@ export default function ScreenMirror({
               break;
 
             case "frame":
-              // Display frame
+              // Display frame (base64 fallback)
               if (imgRef.current) {
                 imgRef.current.src = `data:image/jpeg;base64,${data.data}`;
               }
@@ -220,24 +252,47 @@ export default function ScreenMirror({
   useEffect(() => {
     return () => {
       disconnectScreen();
+      // Cleanup blob URL
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+      }
     };
   }, [disconnectScreen]);
 
-  // Fullscreen toggle
+  // Fullscreen toggle - with iOS fallback (CSS pseudo-fullscreen)
   const toggleFullscreen = useCallback(async () => {
     if (!containerRef.current) return;
 
-    try {
-      if (!document.fullscreenElement) {
-        await containerRef.current.requestFullscreen();
-        setIsFullscreen(true);
-      } else {
-        await document.exitFullscreen();
-        setIsFullscreen(false);
+    // Check if native fullscreen is supported
+    const canFullscreen =
+      document.fullscreenEnabled ||
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (document as any).webkitFullscreenEnabled;
+
+    if (canFullscreen) {
+      try {
+        if (!document.fullscreenElement) {
+          await containerRef.current.requestFullscreen();
+          setIsFullscreen(true);
+        } else {
+          await document.exitFullscreen();
+          setIsFullscreen(false);
+        }
+      } catch (e) {
+        console.log("Native fullscreen failed, using CSS fullscreen");
+        // Fallback to CSS pseudo-fullscreen
+        setIsPseudoFullscreen(!isPseudoFullscreen);
       }
-    } catch (e) {
-      console.error("Fullscreen error:", e);
+    } else {
+      // iOS/unsupported browsers: use CSS pseudo-fullscreen
+      setIsPseudoFullscreen(!isPseudoFullscreen);
     }
+  }, [isPseudoFullscreen]);
+
+  // Exit pseudo-fullscreen
+  const exitPseudoFullscreen = useCallback(() => {
+    setIsPseudoFullscreen(false);
+    setShowControls(true);
   }, []);
 
   // Fullscreen change listener
@@ -276,14 +331,30 @@ export default function ScreenMirror({
     }
   };
 
+  // Combined fullscreen state (native or CSS)
+  const isInFullscreen = isFullscreen || isPseudoFullscreen;
+
   return (
     <div ref={containerRef} className="relative">
       {/* Video display */}
       <div
         className={`relative bg-black rounded-lg overflow-hidden ${
-          isFullscreen ? "fixed inset-0 z-50" : "aspect-video"
+          isInFullscreen ? "fixed inset-0 z-50" : "aspect-video"
         }`}
-        onClick={() => isFullscreen && setShowControls(!showControls)}
+        style={
+          isPseudoFullscreen
+            ? {
+                position: "fixed",
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                zIndex: 9999,
+                backgroundColor: "black",
+              }
+            : undefined
+        }
+        onClick={() => isInFullscreen && setShowControls(!showControls)}
       >
         {connectionState === "streaming" ? (
           <img
@@ -317,7 +388,7 @@ export default function ScreenMirror({
         )}
 
         {/* Fullscreen controls overlay */}
-        {isFullscreen && showControls && (
+        {isInFullscreen && showControls && (
           <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
             <div className="flex items-center justify-between">
               {/* Joystick */}
@@ -351,7 +422,9 @@ export default function ScreenMirror({
 
               {/* Exit fullscreen */}
               <button
-                onClick={toggleFullscreen}
+                onClick={
+                  isPseudoFullscreen ? exitPseudoFullscreen : toggleFullscreen
+                }
                 className="p-3 bg-gray-700/80 hover:bg-gray-600 rounded-full transition-colors"
               >
                 <Minimize2 size={20} className="text-white" />
@@ -359,10 +432,20 @@ export default function ScreenMirror({
             </div>
           </div>
         )}
+
+        {/* Close button for pseudo-fullscreen (always visible in corner) */}
+        {isPseudoFullscreen && (
+          <button
+            onClick={exitPseudoFullscreen}
+            className="absolute top-4 right-4 p-2 bg-black/60 hover:bg-black/80 rounded-full transition-colors z-50"
+          >
+            <X size={24} className="text-white" />
+          </button>
+        )}
       </div>
 
       {/* Controls (non-fullscreen) */}
-      {!isFullscreen && (
+      {!isInFullscreen && (
         <div className="mt-4 space-y-4">
           {/* Connection status */}
           <div className="flex items-center justify-between px-4 py-3 rounded-lg bg-gray-700">
