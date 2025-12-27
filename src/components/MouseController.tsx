@@ -12,7 +12,7 @@ export default function MouseController({
   isLocalMode,
 }: MouseControllerProps) {
   const [connected, setConnected] = useState(false);
-  const [sensitivity, setSensitivity] = useState(1);
+  const [sensitivity, setSensitivity] = useState(20); // Default to fast (20x)
   const wsRef = useRef<WebSocket | null>(null);
   const lastSendTime = useRef<number>(0);
 
@@ -137,24 +137,24 @@ export default function MouseController({
             Vitesse
           </label>
           <span className="text-sm font-bold text-blue-400">
-            {sensitivity.toFixed(1)}x
+            {sensitivity.toFixed(0)}x
           </span>
         </div>
 
         <input
           type="range"
-          min="0.3"
+          min="1"
           max="20"
-          step="0.1"
-          value={sensitivity}
-          onChange={(e) => setSensitivity(parseFloat(e.target.value))}
+          step="1"
+          value={21 - sensitivity}
+          onChange={(e) => setSensitivity(21 - parseFloat(e.target.value))}
           className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
         />
 
         <div className="flex justify-between text-xs text-gray-500">
-          <span>Lent</span>
+          <span>Rapide (20x)</span>
           <span>Normal</span>
-          <span>Rapide</span>
+          <span>Lent (1x)</span>
         </div>
       </div>
 
