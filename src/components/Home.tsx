@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from "react";
-import { Loader, Lock, Eye, EyeOff, Server, Wifi } from "lucide-react";
+import { Loader, Lock, Eye, EyeOff, QrCode, Server, X } from "lucide-react";
+import { Scanner } from "@yudiel/react-qr-scanner";
 import VideoController from "./VideoController";
 import MouseController from "./MouseController";
 
@@ -10,6 +11,41 @@ type AuthState =
   | "authenticated"
   | "failed";
 
+const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000; // 2 days in milliseconds
+
+interface SavedConnection {
+  url: string;
+  savedAt: number;
+}
+
+function getSavedConnection(): SavedConnection | null {
+  try {
+    const saved = localStorage.getItem("remoteConnection");
+    if (saved) {
+      const data: SavedConnection = JSON.parse(saved);
+      const now = Date.now();
+      // Check if still valid (less than 2 days old)
+      if (now - data.savedAt < TWO_DAYS_MS) {
+        return data;
+      } else {
+        // Expired, remove it
+        localStorage.removeItem("remoteConnection");
+      }
+    }
+  } catch {
+    localStorage.removeItem("remoteConnection");
+  }
+  return null;
+}
+
+function saveConnection(url: string) {
+  const data: SavedConnection = {
+    url,
+    savedAt: Date.now(),
+  };
+  localStorage.setItem("remoteConnection", JSON.stringify(data));
+}
+
 export default function Home() {
   const [authState, setAuthState] = useState<AuthState>("setup");
   const [serverUrl, setServerUrl] = useState("");
@@ -17,23 +53,21 @@ export default function Home() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<"video" | "mouse">("video");
+  const [showScanner, setShowScanner] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Check if we're on the same host as the server (local mode)
   const isLocalMode =
     window.location.port === "8080" || window.location.hostname === "localhost";
 
   useEffect(() => {
-    // Load saved server URL
-    const savedUrl = localStorage.getItem("remoteServerUrl");
-    const savedPassword = sessionStorage.getItem("remotePassword");
+    const savedConnection = getSavedConnection();
+    const savedPassword = localStorage.getItem("remotePassword");
 
     if (isLocalMode) {
-      // Local mode - use current host
       setServerUrl(`${window.location.hostname}:8080`);
       setAuthState("password");
-    } else if (savedUrl) {
-      setServerUrl(savedUrl);
+    } else if (savedConnection) {
+      setServerUrl(savedConnection.url);
       setAuthState("password");
     }
 
@@ -42,12 +76,32 @@ export default function Home() {
     }
   }, [isLocalMode]);
 
+  const handleQrScan = (result: { rawValue: string }[]) => {
+    if (result && result.length > 0) {
+      let url = result[0].rawValue;
+      // Remove protocol if present
+      url = url
+        .replace(/^https?:\/\//, "")
+        .replace(/\/$/, "")
+        .replace("/ws", "");
+      setServerUrl(url);
+      saveConnection(url);
+      setShowScanner(false);
+      setAuthState("password");
+    }
+  };
+
   const handleSetupSubmit = () => {
     if (!serverUrl.trim()) {
       setError("Server URL required");
       return;
     }
-    localStorage.setItem("remoteServerUrl", serverUrl.trim());
+    const cleanUrl = serverUrl
+      .trim()
+      .replace(/^https?:\/\//, "")
+      .replace(/\/$/, "");
+    setServerUrl(cleanUrl);
+    saveConnection(cleanUrl);
     setError("");
     setAuthState("password");
   };
@@ -62,18 +116,18 @@ export default function Home() {
     setError("");
 
     try {
-      // Determine WebSocket URL
       let wsUrl: string;
       if (isLocalMode) {
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         wsUrl = `${protocol}//${window.location.hostname}:8080/ws`;
       } else {
-        // Remote mode - use saved server URL
         const cleanUrl = serverUrl
           .replace(/^https?:\/\//, "")
           .replace(/\/$/, "");
         const protocol =
-          serverUrl.startsWith("https") || cleanUrl.includes(".ts.net")
+          serverUrl.startsWith("https") ||
+          cleanUrl.includes(".ngrok") ||
+          cleanUrl.includes(".ts.net")
             ? "wss:"
             : "ws:";
         wsUrl = `${protocol}//${cleanUrl}/ws`;
@@ -84,19 +138,19 @@ export default function Home() {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log("✅ WebSocket connected, waiting for auth request...");
+        console.log("✅ WebSocket connected");
       };
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          console.log("📥 Received:", data);
 
           if (data.type === "authRequired") {
             ws.send(JSON.stringify({ command: "auth", password }));
           } else if (data.type === "authSuccess") {
             setAuthState("authenticated");
-            sessionStorage.setItem("remotePassword", password);
+            // Save password for 2 days too
+            localStorage.setItem("remotePassword", password);
           } else if (data.type === "authFailed") {
             setError(data.message || "Invalid password");
             setAuthState("failed");
@@ -108,7 +162,9 @@ export default function Home() {
       };
 
       ws.onerror = () => {
-        setError("Connection failed - check server URL");
+        setError("Connection failed - server URL may have changed");
+        // Clear saved connection if it fails
+        localStorage.removeItem("remoteConnection");
         setAuthState("failed");
       };
 
@@ -124,15 +180,19 @@ export default function Home() {
     }
   };
 
-  // Setup screen (remote mode only)
-  if (authState === "setup" && !isLocalMode) {
+  // Setup screen with QR scanner
+  if (
+    (authState === "setup" || authState === "failed") &&
+    !isLocalMode &&
+    !serverUrl
+  ) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-gray-900 to-black flex items-center justify-center p-4">
         <div className="w-full max-w-md">
           <div className="text-center mb-8">
             <div className="text-6xl mb-4">📺</div>
             <h1 className="text-4xl font-bold text-white mb-2">Smart Remote</h1>
-            <p className="text-gray-400">Configure your server connection</p>
+            <p className="text-gray-400">Scan QR code or enter server URL</p>
           </div>
 
           {error && (
@@ -141,42 +201,77 @@ export default function Home() {
             </div>
           )}
 
-          <div className="space-y-4">
-            <div className="relative">
-              <Server
-                className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400"
-                size={20}
-              />
-              <input
-                type="text"
-                value={serverUrl}
-                onChange={(e) => setServerUrl(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSetupSubmit()}
-                placeholder="your-mac.tailnet.ts.net"
-                className="w-full pl-12 pr-4 py-4 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                autoFocus
-              />
+          {showScanner ? (
+            <div className="space-y-4">
+              <div className="relative rounded-lg overflow-hidden">
+                <button
+                  onClick={() => setShowScanner(false)}
+                  className="absolute top-2 right-2 z-10 p-2 bg-gray-800/80 rounded-full text-white"
+                >
+                  <X size={20} />
+                </button>
+                <Scanner
+                  onScan={handleQrScan}
+                  onError={(error) => console.log(error)}
+                  constraints={{ facingMode: "environment" }}
+                  styles={{
+                    container: { width: "100%", borderRadius: "0.5rem" },
+                    video: { borderRadius: "0.5rem" },
+                  }}
+                />
+              </div>
+              <p className="text-center text-gray-400 text-sm">
+                Point camera at QR code in terminal
+              </p>
             </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Scan QR Button */}
+              <button
+                onClick={() => setShowScanner(true)}
+                className="w-full py-4 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-3"
+              >
+                <QrCode size={24} />
+                Scan QR Code
+              </button>
 
-            <p className="text-xs text-gray-500 text-center">
-              Enter your Tailscale Funnel URL (e.g., your-mac.tailnet.ts.net)
-            </p>
+              <div className="flex items-center gap-4">
+                <div className="flex-1 h-px bg-gray-700"></div>
+                <span className="text-gray-500 text-sm">or</span>
+                <div className="flex-1 h-px bg-gray-700"></div>
+              </div>
 
-            <button
-              onClick={handleSetupSubmit}
-              className="w-full py-4 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
-            >
-              <Wifi size={20} />
-              Continue
-            </button>
-          </div>
+              {/* Manual URL input */}
+              <div className="relative">
+                <Server
+                  className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400"
+                  size={20}
+                />
+                <input
+                  type="text"
+                  value={serverUrl}
+                  onChange={(e) => setServerUrl(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSetupSubmit()}
+                  placeholder="abc123.ngrok-free.app"
+                  className="w-full pl-12 pr-4 py-4 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <button
+                onClick={handleSetupSubmit}
+                className="w-full py-3 px-4 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-lg transition-colors"
+              >
+                Connect Manually
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
   // Password screen
-  if (authState === "password" || authState === "failed") {
+  if (authState === "password" || (authState === "failed" && serverUrl)) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-gray-900 to-black flex items-center justify-center p-4">
         <div className="w-full max-w-md">
@@ -204,7 +299,7 @@ export default function Home() {
                 onChange={(e) => setPassword(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleConnect()}
                 placeholder="Password"
-                className="w-full pl-12 pr-12 py-4 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                className="w-full pl-12 pr-12 py-4 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
                 autoFocus
               />
               <button
@@ -227,19 +322,19 @@ export default function Home() {
             {!isLocalMode && (
               <button
                 onClick={() => {
-                  localStorage.removeItem("remoteServerUrl");
-                  setAuthState("setup");
+                  localStorage.removeItem("remoteConnection");
                   setServerUrl("");
+                  setAuthState("setup");
                 }}
                 className="w-full py-2 text-gray-500 hover:text-gray-300 text-sm"
               >
-                Change server URL
+                Change server
               </button>
             )}
           </div>
 
           <p className="text-center text-gray-500 text-sm mt-6">
-            📍 {isLocalMode ? `${window.location.hostname}:8080` : serverUrl}
+            📍 {serverUrl}
           </p>
         </div>
       </div>
@@ -253,11 +348,9 @@ export default function Home() {
         <div className="text-center">
           <div className="text-6xl mb-6 animate-bounce">📺</div>
           <h1 className="text-4xl font-bold text-white mb-2">Smart Remote</h1>
-          <p className="text-gray-400 mb-8 text-lg">Connecting...</p>
-
-          <div className="flex items-center justify-center gap-3 text-gray-300">
+          <div className="flex items-center justify-center gap-3 text-gray-300 mt-8">
             <Loader size={20} className="animate-spin" />
-            <p className="text-lg font-medium">Authenticating...</p>
+            <p className="text-lg font-medium">Connecting...</p>
           </div>
         </div>
       </div>
@@ -268,16 +361,12 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-black p-4">
       <div className="max-w-md mx-auto">
-        {/* Header */}
         <div className="text-center mb-8 mt-6">
           <h1 className="text-3xl font-bold text-white mb-2">Smart Remote</h1>
-          <p className="text-gray-400 text-sm mb-1">
-            📍 {isLocalMode ? `${window.location.hostname}:8080` : serverUrl}
-          </p>
+          <p className="text-gray-400 text-sm mb-1">📍 {serverUrl}</p>
           <p className="text-xs text-green-400 font-semibold">✅ Connected</p>
         </div>
 
-        {/* Tabs */}
         <div className="flex gap-2 mb-6 bg-gray-800 p-1 rounded-lg">
           <button
             onClick={() => setActiveTab("video")}
@@ -301,7 +390,6 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Controllers - pass the server URL for WebSocket connection */}
         {activeTab === "video" && (
           <VideoController
             serverUrl={
@@ -319,11 +407,12 @@ export default function Home() {
           />
         )}
 
-        {/* Disconnect Button */}
         <button
           onClick={() => {
-            sessionStorage.removeItem("remotePassword");
-            setAuthState("password");
+            localStorage.removeItem("remotePassword");
+            localStorage.removeItem("remoteConnection");
+            setAuthState("setup");
+            setServerUrl("");
             setPassword("");
             if (wsRef.current) {
               wsRef.current.close();

@@ -10,6 +10,7 @@
     "server": "cd server && python3 server.py"
   },
   "dependencies": {
+    "@yudiel/react-qr-scanner": "^2.5.0",
     "lucide-react": "^0.546.0",
     "qrcode.react": "^4.2.0",
     "react": "^18.3.1",

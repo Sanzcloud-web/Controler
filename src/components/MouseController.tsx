@@ -26,13 +26,12 @@ export default function MouseController({
   const connectToServer = () => {
     try {
       const cleanUrl = serverUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
-      const protocol = isLocalMode
-        ? window.location.protocol === "https:"
-          ? "wss:"
-          : "ws:"
-        : serverUrl.startsWith("https") || cleanUrl.includes(".ts.net")
-          ? "wss:"
-          : "ws:";
+      // Use wss:// if page is loaded over HTTPS or if using secure tunnels
+      const needsSecure =
+        window.location.protocol === "https:" ||
+        cleanUrl.includes(".ngrok") ||
+        cleanUrl.includes(".ts.net");
+      const protocol = needsSecure ? "wss:" : "ws:";
       const wsUrl = `${protocol}//${cleanUrl}/ws`;
 
       const ws = new WebSocket(wsUrl);
@@ -47,7 +46,7 @@ export default function MouseController({
           const data = JSON.parse(event.data);
 
           if (data.type === "authRequired") {
-            const storedPassword = sessionStorage.getItem("remotePassword");
+            const storedPassword = localStorage.getItem("remotePassword");
             if (storedPassword) {
               ws.send(
                 JSON.stringify({ command: "auth", password: storedPassword }),
