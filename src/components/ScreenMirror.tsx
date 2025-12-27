@@ -40,26 +40,24 @@ export default function ScreenMirror({
   const frameCountRef = useRef(0);
   const startTimeRef = useRef<number | null>(null);
 
-  // Build screen server WebSocket URL
+  // Build screen server WebSocket URL (uses /screen endpoint on same server)
   const getScreenWsUrl = useCallback(() => {
     const cleanUrl = serverUrl
       .trim()
       .replace(/^https?:\/\//, "")
       .replace(/\/$/, "")
       .trim();
-    const host = cleanUrl.split(":")[0];
 
-    // For ngrok/tunnels - screen server needs separate tunnel
-    if (cleanUrl.includes(".ngrok") || cleanUrl.includes(".ts.net")) {
-      // Use same protocol but warn user
-      const protocol = "wss:";
-      return `${protocol}//${cleanUrl.replace(":8080", "")}/ws`;
-    }
+    // Determine protocol based on connection type
+    const needsSecure =
+      window.location.protocol === "https:" ||
+      cleanUrl.includes(".ngrok") ||
+      cleanUrl.includes(".ts.net");
+    const protocol = needsSecure ? "wss:" : "ws:";
 
-    // For local network
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${protocol}//${host}:${screenServerPort}/ws`;
-  }, [serverUrl, screenServerPort]);
+    // Use /screen endpoint on the same server (port 8080)
+    return `${protocol}//${cleanUrl}/screen`;
+  }, [serverUrl]);
 
   // Connect to screen streaming server
   const connectScreen = useCallback(() => {
@@ -305,8 +303,7 @@ export default function ScreenMirror({
             </p>
             {connectionState === "failed" && (
               <p className="text-sm mt-2 text-red-400">
-                Vérifiez que screen_server.py tourne sur le port{" "}
-                {screenServerPort}
+                Vérifiez que server.py est lancé
               </p>
             )}
           </div>

@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
 """
 HTTP + WebSocket server for Video Remote Controller using aiohttp
-With QR code, password auth, and ngrok support
+With QR code, password auth, ngrok support, and screen streaming
 """
 import asyncio
 import socket
 import json
 import subprocess
 import os
+import io
+import time
+import base64
 import aiohttp
 from pathlib import Path
 from aiohttp import web
 import logging
 import pyautogui
 import segno
+from PIL import Image
+import mss
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -23,12 +28,196 @@ PORT = 8080
 REMOTE_PASSWORD = os.getenv('REMOTE_PASSWORD', 'changeme')
 NGROK_URL = None  # Will be set when ngrok is detected
 
-# Track authenticated sessions
+# Screen streaming settings
+TARGET_FPS = 30
+QUALITY = 60
+MAX_WIDTH = 1280
+MAX_HEIGHT = 720
+
+# Track authenticated sessions and streaming tasks
 authenticated_clients = set()
+streaming_tasks = {}
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
+
+# ============== Screen Streaming ==============
+
+class ScreenStreamer:
+    """Captures screen and streams as MJPEG over WebSocket."""
+
+    def __init__(self, ws, width=1280, height=720, fps=30, quality=60):
+        self.ws = ws
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self.quality = quality
+        self.running = False
+        self.sct = mss.mss()
+        self.monitor = self.sct.monitors[1]  # Primary monitor
+        self.frame_count = 0
+        self.start_time = None
+
+    async def start(self):
+        """Start streaming."""
+        self.running = True
+        self.start_time = time.time()
+        frame_interval = 1.0 / self.fps
+
+        logger.info(f"📺 Starting stream: {self.width}x{self.height} @ {self.fps}fps")
+
+        try:
+            while self.running:
+                frame_start = time.time()
+
+                # Capture screen
+                screenshot = self.sct.grab(self.monitor)
+
+                # Convert to PIL Image
+                img = Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
+
+                # Resize if needed
+                if img.width != self.width or img.height != self.height:
+                    img = img.resize((self.width, self.height), Image.Resampling.LANCZOS)
+
+                # Encode as JPEG
+                buffer = io.BytesIO()
+                img.save(buffer, format='JPEG', quality=self.quality, optimize=True)
+                frame_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+                # Send frame
+                try:
+                    await self.ws.send_json({
+                        "type": "frame",
+                        "data": frame_data,
+                        "timestamp": time.time(),
+                        "frame": self.frame_count
+                    })
+                except Exception as e:
+                    logger.error(f"Failed to send frame: {e}")
+                    break
+
+                self.frame_count += 1
+
+                # Calculate actual FPS every second
+                if self.frame_count % self.fps == 0:
+                    elapsed = time.time() - self.start_time
+                    actual_fps = self.frame_count / elapsed
+                    logger.info(f"📊 Streaming: {actual_fps:.1f} FPS")
+
+                # Rate limiting
+                elapsed = time.time() - frame_start
+                sleep_time = frame_interval - elapsed
+                if sleep_time > 0:
+                    await asyncio.sleep(sleep_time)
+
+        except asyncio.CancelledError:
+            logger.info("🛑 Stream cancelled")
+        except Exception as e:
+            logger.error(f"❌ Stream error: {e}")
+        finally:
+            self.running = False
+            logger.info(f"📺 Stream ended after {self.frame_count} frames")
+
+    def stop(self):
+        """Stop streaming."""
+        self.running = False
+
+
+async def screen_websocket_handler(request):
+    """Handle WebSocket connections for screen streaming."""
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    client_id = id(ws)
+    streamer = None
+    logger.info(f'🖥️ New screen client: {request.remote}')
+
+    try:
+        async for msg in ws:
+            if msg.type == web.WSMsgType.TEXT:
+                try:
+                    data = json.loads(msg.data)
+                    command = data.get('command')
+
+                    # Authentication
+                    if command == 'auth':
+                        password = data.get('password', '')
+                        if password == REMOTE_PASSWORD:
+                            authenticated_clients.add(client_id)
+                            await ws.send_json({"type": "authSuccess"})
+                            logger.info(f'✅ Screen client authenticated: {request.remote}')
+                        else:
+                            await ws.send_json({"type": "authFailed"})
+                            logger.warning(f'❌ Screen auth failed: {request.remote}')
+                        continue
+
+                    # Check auth
+                    if client_id not in authenticated_clients:
+                        await ws.send_json({"type": "authRequired"})
+                        continue
+
+                    # Start streaming
+                    if command == 'startStream':
+                        if streamer and streamer.running:
+                            streamer.stop()
+
+                        width = min(data.get('width', MAX_WIDTH), MAX_WIDTH)
+                        height = min(data.get('height', MAX_HEIGHT), MAX_HEIGHT)
+                        fps = min(data.get('fps', TARGET_FPS), 60)
+                        quality = data.get('quality', QUALITY)
+
+                        streamer = ScreenStreamer(ws, width, height, fps, quality)
+                        streaming_tasks[client_id] = asyncio.create_task(streamer.start())
+
+                        await ws.send_json({
+                            "type": "streamStarted",
+                            "width": width,
+                            "height": height,
+                            "fps": fps
+                        })
+
+                    # Stop streaming
+                    elif command == 'stopStream':
+                        if streamer:
+                            streamer.stop()
+                        if client_id in streaming_tasks:
+                            streaming_tasks[client_id].cancel()
+                            del streaming_tasks[client_id]
+                        await ws.send_json({"type": "streamStopped"})
+
+                    # Update settings
+                    elif command == 'setQuality':
+                        if streamer:
+                            streamer.quality = data.get('quality', QUALITY)
+
+                    elif command == 'setFps':
+                        if streamer:
+                            streamer.fps = min(data.get('fps', TARGET_FPS), 60)
+
+                except json.JSONDecodeError:
+                    await ws.send_json({"type": "error", "message": "Invalid JSON"})
+
+            elif msg.type == web.WSMsgType.ERROR:
+                logger.error(f'❌ Screen WebSocket error: {ws.exception()}')
+
+    except Exception as e:
+        logger.error(f'❌ Screen connection error: {e}')
+    finally:
+        # Cleanup
+        if streamer:
+            streamer.stop()
+        if client_id in streaming_tasks:
+            streaming_tasks[client_id].cancel()
+            del streaming_tasks[client_id]
+        authenticated_clients.discard(client_id)
+        logger.info(f'❌ Screen client disconnected: {request.remote}')
+
+    return ws
+
+
+# ============== Original Functions ==============
 
 def print_qr_code(url: str):
     """Print QR code in terminal"""
@@ -186,7 +375,6 @@ def execute_episode_script(direction: str):
 
 def inject_javascript(js_code: str):
     """Inject JavaScript code into the browser using DevTools console"""
-    import time
     try:
         # Open DevTools console (Cmd+Option+J)
         open_script = '''
@@ -406,9 +594,10 @@ async def wait_for_ngrok(max_wait: int = 30) -> str | None:
 async def main():
     app = web.Application()
 
-    # Routes
+    # Routes - order matters! More specific routes first
     app.router.add_get('/', handle_index)
     app.router.add_get('/ws', websocket_handler)
+    app.router.add_get('/screen', screen_websocket_handler)  # Screen streaming endpoint
     app.router.add_get('/video', handle_video)
     app.router.add_get('/{path:.*}', handle_static)
 
@@ -423,12 +612,14 @@ async def main():
     print(f"""
 ╔════════════════════════════════════════════════════════════╗
 ║      📺 Video Remote Controller Server                     ║
+║      🖥️  + Screen Streaming (MJPEG)                        ║
 ╚════════════════════════════════════════════════════════════╝
 
 🔐 Password: {REMOTE_PASSWORD}
 
 ✅ Local: {local_url}
-🔌 WebSocket: ws://{ip}:{PORT}/ws
+🔌 Control WebSocket: ws://{ip}:{PORT}/ws
+🖥️  Screen WebSocket: ws://{ip}:{PORT}/screen
 """)
 
     # Try to detect ngrok
@@ -469,6 +660,9 @@ Press Ctrl+C to stop the server
     except KeyboardInterrupt:
         print("\n\n✋ Server stopped")
     finally:
+        # Cleanup streaming tasks
+        for task in streaming_tasks.values():
+            task.cancel()
         await runner.cleanup()
 
 
