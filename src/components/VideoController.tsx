@@ -46,7 +46,11 @@ export default function VideoController({
 
   const connectToServer = () => {
     try {
-      const cleanUrl = serverUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
+      const cleanUrl = serverUrl
+        .trim()
+        .replace(/^https?:\/\//, "")
+        .replace(/\/$/, "")
+        .trim();
       // Use wss:// if page is loaded over HTTPS or if using secure tunnels
       const needsSecure =
         window.location.protocol === "https:" ||

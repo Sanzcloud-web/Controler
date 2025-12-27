@@ -4,9 +4,6 @@ pyautogui==0.9.53
 segno==1.6.1
 python-dotenv==1.0.1
 
-# Screen streaming (WebRTC)
-aiortc==1.9.0
+# Screen streaming (MJPEG over WebSocket)
 mss==9.0.1
-numpy>=1.24.0
 Pillow>=10.0.0
-av>=12.0.0

@@ -10,6 +10,7 @@ import {
   WifiOff,
   MousePointer,
   MousePointerClick,
+  Settings,
 } from "lucide-react";
 
 interface ScreenMirrorProps {
@@ -17,7 +18,7 @@ interface ScreenMirrorProps {
   screenServerPort?: number;
 }
 
-type ConnectionState = "disconnected" | "connecting" | "connected" | "failed";
+type ConnectionState = "disconnected" | "connecting" | "streaming" | "failed";
 
 export default function ScreenMirror({
   serverUrl,
@@ -28,190 +29,201 @@ export default function ScreenMirror({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [sensitivity, setSensitivity] = useState(15);
   const [showControls, setShowControls] = useState(true);
-  const [stats, setStats] = useState({ fps: 0, latency: 0 });
+  const [stats, setStats] = useState({ fps: 0, frames: 0 });
+  const [quality, setQuality] = useState(60);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const pcRef = useRef<RTCPeerConnection | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+  const screenWsRef = useRef<WebSocket | null>(null);
+  const controlWsRef = useRef<WebSocket | null>(null);
   const lastSendTime = useRef<number>(0);
-  const statsIntervalRef = useRef<number | null>(null);
+  const frameCountRef = useRef(0);
+  const startTimeRef = useRef<number | null>(null);
 
-  // Build screen server URL
-  const getScreenServerUrl = useCallback(() => {
-    const cleanUrl = serverUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  // Build screen server WebSocket URL
+  const getScreenWsUrl = useCallback(() => {
+    const cleanUrl = serverUrl
+      .trim()
+      .replace(/^https?:\/\//, "")
+      .replace(/\/$/, "")
+      .trim();
+    const host = cleanUrl.split(":")[0];
 
-    // For ngrok/tunnel, we need to use the same host but different port won't work
-    // So we'll use the main server URL and expect screen_server to run on a subdomain or same host
+    // For ngrok/tunnels - screen server needs separate tunnel
     if (cleanUrl.includes(".ngrok") || cleanUrl.includes(".ts.net")) {
-      // For tunnels, replace the port or use path-based routing
-      // This assumes ngrok is configured to forward to screen_server
-      const protocol = "https:";
-      return `${protocol}//${cleanUrl.replace(":8080", "")}`;
+      // Use same protocol but warn user
+      const protocol = "wss:";
+      return `${protocol}//${cleanUrl.replace(":8080", "")}/ws`;
     }
 
     // For local network
-    const host = cleanUrl.split(":")[0];
-    const protocol = window.location.protocol === "https:" ? "https:" : "http:";
-    return `${protocol}//${host}:${screenServerPort}`;
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${host}:${screenServerPort}/ws`;
   }, [serverUrl, screenServerPort]);
 
-  // Connect to WebRTC
-  const connect = useCallback(async () => {
-    if (pcRef.current) {
-      pcRef.current.close();
+  // Connect to screen streaming server
+  const connectScreen = useCallback(() => {
+    if (screenWsRef.current?.readyState === WebSocket.OPEN) {
+      return;
     }
 
     setConnectionState("connecting");
+    const wsUrl = getScreenWsUrl();
+    console.log("Connecting to screen server:", wsUrl);
 
     try {
-      const pc = new RTCPeerConnection({
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-        ],
-      });
-      pcRef.current = pc;
+      const ws = new WebSocket(wsUrl);
+      screenWsRef.current = ws;
 
-      // Handle incoming tracks
-      pc.ontrack = (event) => {
-        console.log("Received track:", event.track.kind);
-        if (videoRef.current && event.streams[0]) {
-          videoRef.current.srcObject = event.streams[0];
+      ws.onopen = () => {
+        console.log("Screen WebSocket connected");
+        // Authenticate
+        const password = localStorage.getItem("remotePassword") || "";
+        ws.send(JSON.stringify({ command: "auth", password }));
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          switch (data.type) {
+            case "authSuccess":
+              console.log("Screen server authenticated");
+              // Start streaming
+              ws.send(
+                JSON.stringify({
+                  command: "startStream",
+                  width: 1280,
+                  height: 720,
+                  fps: 30,
+                  quality: quality,
+                }),
+              );
+              break;
+
+            case "authFailed":
+              console.error("Screen auth failed");
+              setConnectionState("failed");
+              break;
+
+            case "streamStarted":
+              console.log("Stream started:", data);
+              setConnectionState("streaming");
+              frameCountRef.current = 0;
+              startTimeRef.current = Date.now();
+              break;
+
+            case "frame":
+              // Display frame
+              if (imgRef.current) {
+                imgRef.current.src = `data:image/jpeg;base64,${data.data}`;
+              }
+              frameCountRef.current++;
+
+              // Update FPS stats
+              if (startTimeRef.current) {
+                const elapsed = (Date.now() - startTimeRef.current) / 1000;
+                const fps = frameCountRef.current / elapsed;
+                setStats({
+                  fps: Math.round(fps),
+                  frames: frameCountRef.current,
+                });
+              }
+              break;
+
+            case "streamStopped":
+              setConnectionState("disconnected");
+              break;
+          }
+        } catch (e) {
+          console.error("Failed to parse screen message:", e);
         }
       };
 
-      // Monitor connection state
-      pc.onconnectionstatechange = () => {
-        console.log("Connection state:", pc.connectionState);
-        switch (pc.connectionState) {
-          case "connected":
-            setConnectionState("connected");
-            startStatsMonitoring();
-            break;
-          case "disconnected":
-          case "failed":
-            setConnectionState("failed");
-            stopStatsMonitoring();
-            break;
-          case "closed":
-            setConnectionState("disconnected");
-            stopStatsMonitoring();
-            break;
-        }
+      ws.onerror = (error) => {
+        console.error("Screen WebSocket error:", error);
+        setConnectionState("failed");
       };
 
-      pc.oniceconnectionstatechange = () => {
-        console.log("ICE state:", pc.iceConnectionState);
-      };
-
-      // Create offer
-      const offer = await pc.createOffer({
-        offerToReceiveVideo: true,
-        offerToReceiveAudio: false,
-      });
-      await pc.setLocalDescription(offer);
-
-      // Wait for ICE gathering to complete
-      await new Promise<void>((resolve) => {
-        if (pc.iceGatheringState === "complete") {
-          resolve();
-        } else {
-          const checkState = () => {
-            if (pc.iceGatheringState === "complete") {
-              pc.removeEventListener("icegatheringstatechange", checkState);
-              resolve();
-            }
-          };
-          pc.addEventListener("icegatheringstatechange", checkState);
-          // Timeout after 5 seconds
-          setTimeout(resolve, 5000);
+      ws.onclose = () => {
+        console.log("Screen WebSocket closed");
+        if (connectionState === "streaming") {
+          setConnectionState("disconnected");
         }
-      });
-
-      // Send offer to server
-      const screenServerUrl = getScreenServerUrl();
-      const storedPassword = localStorage.getItem("remotePassword") || "";
-
-      console.log("Connecting to screen server:", screenServerUrl);
-
-      const response = await fetch(`${screenServerUrl}/offer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sdp: pc.localDescription?.sdp,
-          type: pc.localDescription?.type,
-          password: storedPassword,
-          width: 1280,
-          height: 720,
-          fps: 30,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Connection failed");
-      }
-
-      const answer = await response.json();
-      await pc.setRemoteDescription(
-        new RTCSessionDescription({
-          sdp: answer.sdp,
-          type: answer.type,
-        }),
-      );
-
-      console.log("WebRTC connection established");
+      };
     } catch (error) {
-      console.error("Failed to connect:", error);
+      console.error("Failed to connect to screen server:", error);
       setConnectionState("failed");
     }
-  }, [getScreenServerUrl]);
+  }, [getScreenWsUrl, quality, connectionState]);
 
-  // Stats monitoring
-  const startStatsMonitoring = () => {
-    if (statsIntervalRef.current) return;
-
-    statsIntervalRef.current = window.setInterval(async () => {
-      if (!pcRef.current) return;
-
-      try {
-        const stats = await pcRef.current.getStats();
-        stats.forEach((report) => {
-          if (report.type === "inbound-rtp" && report.kind === "video") {
-            const fps = report.framesPerSecond || 0;
-            setStats((prev) => ({ ...prev, fps: Math.round(fps) }));
-          }
-        });
-      } catch (e) {
-        // Ignore stats errors
+  // Disconnect from screen server
+  const disconnectScreen = useCallback(() => {
+    if (screenWsRef.current) {
+      if (screenWsRef.current.readyState === WebSocket.OPEN) {
+        screenWsRef.current.send(JSON.stringify({ command: "stopStream" }));
       }
-    }, 1000);
-  };
-
-  const stopStatsMonitoring = () => {
-    if (statsIntervalRef.current) {
-      clearInterval(statsIntervalRef.current);
-      statsIntervalRef.current = null;
+      screenWsRef.current.close();
+      screenWsRef.current = null;
     }
-  };
-
-  // Disconnect
-  const disconnect = useCallback(() => {
-    if (pcRef.current) {
-      pcRef.current.close();
-      pcRef.current = null;
-    }
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-    stopStatsMonitoring();
     setConnectionState("disconnected");
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
+    setStats({ fps: 0, frames: 0 });
   }, []);
+
+  // Connect to main server for mouse control
+  useEffect(() => {
+    const connectControl = () => {
+      const cleanUrl = serverUrl
+        .trim()
+        .replace(/^https?:\/\//, "")
+        .replace(/\/$/, "")
+        .trim();
+      const needsSecure =
+        window.location.protocol === "https:" ||
+        cleanUrl.includes(".ngrok") ||
+        cleanUrl.includes(".ts.net");
+      const protocol = needsSecure ? "wss:" : "ws:";
+      const wsUrl = `${protocol}//${cleanUrl}/ws`;
+
+      const ws = new WebSocket(wsUrl);
+      controlWsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log("Control WebSocket connected");
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "authRequired") {
+            const password = localStorage.getItem("remotePassword");
+            if (password) {
+              ws.send(JSON.stringify({ command: "auth", password }));
+            }
+          }
+        } catch (e) {
+          console.error("Control parse error:", e);
+        }
+      };
+
+      ws.onclose = () => {
+        setTimeout(connectControl, 3000);
+      };
+    };
+
+    connectControl();
+
+    return () => {
+      controlWsRef.current?.close();
+    };
+  }, [serverUrl]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      disconnectScreen();
+    };
+  }, [disconnectScreen]);
 
   // Fullscreen toggle
   const toggleFullscreen = useCallback(async () => {
@@ -230,61 +242,6 @@ export default function ScreenMirror({
     }
   }, []);
 
-  // Connect to main WebSocket for mouse control
-  useEffect(() => {
-    const connectWs = () => {
-      const cleanUrl = serverUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
-      const needsSecure =
-        window.location.protocol === "https:" ||
-        cleanUrl.includes(".ngrok") ||
-        cleanUrl.includes(".ts.net");
-      const protocol = needsSecure ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${cleanUrl}/ws`;
-
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        console.log("Mouse control WebSocket connected");
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === "authRequired") {
-            const storedPassword = localStorage.getItem("remotePassword");
-            if (storedPassword) {
-              ws.send(
-                JSON.stringify({ command: "auth", password: storedPassword }),
-              );
-            }
-          }
-        } catch (e) {
-          console.error("Failed to parse message:", e);
-        }
-      };
-
-      ws.onclose = () => {
-        setTimeout(connectWs, 3000);
-      };
-    };
-
-    connectWs();
-
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-    };
-  }, [serverUrl]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      disconnect();
-    };
-  }, [disconnect]);
-
   // Fullscreen change listener
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -298,10 +255,13 @@ export default function ScreenMirror({
 
   // Send mouse command
   const sendCommand = (command: string, value?: object) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+    if (
+      !controlWsRef.current ||
+      controlWsRef.current.readyState !== WebSocket.OPEN
+    ) {
       return;
     }
-    wsRef.current.send(JSON.stringify({ command, ...value }));
+    controlWsRef.current.send(JSON.stringify({ command, ...value }));
   };
 
   // Joystick handler
@@ -327,12 +287,10 @@ export default function ScreenMirror({
         }`}
         onClick={() => isFullscreen && setShowControls(!showControls)}
       >
-        {connectionState === "connected" ? (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
+        {connectionState === "streaming" ? (
+          <img
+            ref={imgRef}
+            alt="Screen stream"
             className="w-full h-full object-contain"
           />
         ) : (
@@ -340,16 +298,22 @@ export default function ScreenMirror({
             <Monitor size={64} className="mb-4 opacity-50" />
             <p className="text-lg">
               {connectionState === "connecting"
-                ? "Connecting..."
+                ? "Connexion..."
                 : connectionState === "failed"
-                  ? "Connection failed"
-                  : "Click Connect to start"}
+                  ? "Connexion échouée"
+                  : "Cliquez sur Connect"}
             </p>
+            {connectionState === "failed" && (
+              <p className="text-sm mt-2 text-red-400">
+                Vérifiez que screen_server.py tourne sur le port{" "}
+                {screenServerPort}
+              </p>
+            )}
           </div>
         )}
 
         {/* Stats overlay */}
-        {connectionState === "connected" && (
+        {connectionState === "streaming" && (
           <div className="absolute top-2 right-2 bg-black/70 px-2 py-1 rounded text-xs text-green-400">
             {stats.fps} FPS
           </div>
@@ -406,30 +370,30 @@ export default function ScreenMirror({
           {/* Connection status */}
           <div className="flex items-center justify-between px-4 py-3 rounded-lg bg-gray-700">
             <div className="flex items-center gap-2">
-              {connectionState === "connected" ? (
+              {connectionState === "streaming" ? (
                 <Wifi size={18} className="text-green-500" />
               ) : (
                 <WifiOff size={18} className="text-red-500" />
               )}
               <span className="text-sm text-gray-300">
-                {connectionState === "connected"
-                  ? `Connected (${stats.fps} FPS)`
+                {connectionState === "streaming"
+                  ? `Streaming (${stats.fps} FPS)`
                   : connectionState === "connecting"
-                    ? "Connecting..."
-                    : "Disconnected"}
+                    ? "Connexion..."
+                    : "Déconnecté"}
               </span>
             </div>
 
-            {connectionState === "connected" ? (
+            {connectionState === "streaming" ? (
               <button
-                onClick={disconnect}
+                onClick={disconnectScreen}
                 className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors"
               >
-                Disconnect
+                Stop
               </button>
             ) : (
               <button
-                onClick={connect}
+                onClick={connectScreen}
                 disabled={connectionState === "connecting"}
                 className="px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white text-sm rounded transition-colors flex items-center gap-1"
               >
@@ -446,12 +410,41 @@ export default function ScreenMirror({
           {/* Fullscreen button */}
           <button
             onClick={toggleFullscreen}
-            disabled={connectionState !== "connected"}
+            disabled={connectionState !== "streaming"}
             className="w-full py-3 px-4 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:text-gray-500 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
           >
             <Maximize2 size={20} />
             Plein écran avec contrôles
           </button>
+
+          {/* Quality slider */}
+          <div className="space-y-3 bg-gray-800 p-4 rounded-lg">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-gray-300 flex items-center gap-2">
+                <Settings size={18} />
+                Qualité JPEG
+              </label>
+              <span className="text-sm font-bold text-blue-400">
+                {quality}%
+              </span>
+            </div>
+
+            <input
+              type="range"
+              min="20"
+              max="100"
+              step="5"
+              value={quality}
+              onChange={(e) => setQuality(parseInt(e.target.value))}
+              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+            />
+
+            <div className="flex justify-between text-xs text-gray-500">
+              <span>Rapide</span>
+              <span>Équilibré</span>
+              <span>Qualité</span>
+            </div>
+          </div>
 
           {/* Sensitivity slider */}
           <div className="space-y-3 bg-gray-800 p-4 rounded-lg">
@@ -486,8 +479,7 @@ export default function ScreenMirror({
           <div className="grid grid-cols-2 gap-3">
             <button
               onClick={() => sendCommand("mouseLeftClick")}
-              disabled={connectionState !== "connected"}
-              className="py-3 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 text-white font-semibold rounded-lg transition-colors active:scale-95 flex items-center justify-center gap-2"
+              className="py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors active:scale-95 flex items-center justify-center gap-2"
             >
               <MousePointerClick size={18} />
               Clic Gauche
@@ -495,8 +487,7 @@ export default function ScreenMirror({
 
             <button
               onClick={() => sendCommand("mouseRightClick")}
-              disabled={connectionState !== "connected"}
-              className="py-3 px-4 bg-red-600 hover:bg-red-700 disabled:bg-gray-700 disabled:text-gray-500 text-white font-semibold rounded-lg transition-colors active:scale-95 flex items-center justify-center gap-2"
+              className="py-3 px-4 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg transition-colors active:scale-95 flex items-center justify-center gap-2"
             >
               <MousePointer size={18} />
               Clic Droit
@@ -504,11 +495,9 @@ export default function ScreenMirror({
           </div>
 
           {/* Joystick for non-fullscreen mode */}
-          {connectionState === "connected" && (
+          {connectionState === "streaming" && (
             <div className="flex flex-col items-center justify-center space-y-2 bg-gray-800 p-4 rounded-lg">
-              <p className="text-sm text-gray-400">
-                Contrôle souris (ou utilisez le plein écran)
-              </p>
+              <p className="text-sm text-gray-400">Contrôle souris</p>
               <Joystick
                 size={150}
                 sticky={false}

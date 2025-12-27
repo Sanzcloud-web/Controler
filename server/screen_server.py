@@ -1,159 +1,210 @@
 #!/usr/bin/env python3
 """
-WebRTC Screen Streaming Server using aiortc
-Captures screen and streams to browser with low latency
+Screen Streaming Server using WebSocket + MJPEG
+Captures screen and streams to browser with good performance
+No FFmpeg compilation required!
 """
 import asyncio
 import json
 import os
-import fractions
+import io
 import time
-from pathlib import Path
+import base64
 from aiohttp import web
 import logging
 import mss
-import numpy as np
-from av import VideoFrame
-from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
-from aiortc.contrib.media import MediaRelay
+from PIL import Image
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-PORT = 8081  # Different port from main server
+PORT = 8081
 REMOTE_PASSWORD = os.getenv('REMOTE_PASSWORD', 'changeme')
 TARGET_FPS = 30
-FRAME_DURATION = 1 / TARGET_FPS
+QUALITY = 60  # JPEG quality (1-100)
+MAX_WIDTH = 1280
+MAX_HEIGHT = 720
 
-# Track authenticated sessions and peer connections
+# Track authenticated clients
 authenticated_clients = set()
-peer_connections = set()
-relay = MediaRelay()
+streaming_tasks = {}
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 
-class ScreenCaptureTrack(VideoStreamTrack):
-    """
-    A video track that captures the screen.
-    Uses mss for fast screen capture.
-    """
-    kind = "video"
+class ScreenStreamer:
+    """Captures screen and streams as MJPEG over WebSocket."""
 
-    def __init__(self, width: int = 1280, height: int = 720, fps: int = 30):
-        super().__init__()
+    def __init__(self, ws, width=1280, height=720, fps=30, quality=60):
+        self.ws = ws
         self.width = width
         self.height = height
         self.fps = fps
-        self.frame_duration = fractions.Fraction(1, fps)
-        self._timestamp = 0
-        self._start_time = None
-        self._frame_count = 0
+        self.quality = quality
+        self.running = False
         self.sct = mss.mss()
+        self.monitor = self.sct.monitors[1]  # Primary monitor
+        self.frame_count = 0
+        self.start_time = None
 
-        # Get primary monitor
-        self.monitor = self.sct.monitors[1]  # 0 is all monitors, 1 is primary
-        logger.info(f"📺 Screen capture initialized: {self.monitor['width']}x{self.monitor['height']}")
+    async def start(self):
+        """Start streaming."""
+        self.running = True
+        self.start_time = time.time()
+        frame_interval = 1.0 / self.fps
 
-    async def recv(self):
-        """Capture and return a video frame."""
-        pts, time_base = await self.next_timestamp()
+        logger.info(f"📺 Starting stream: {self.width}x{self.height} @ {self.fps}fps")
 
-        # Capture screen
-        screenshot = self.sct.grab(self.monitor)
+        try:
+            while self.running:
+                frame_start = time.time()
 
-        # Convert to numpy array (BGRA format from mss)
-        img = np.array(screenshot)
+                # Capture screen
+                screenshot = self.sct.grab(self.monitor)
 
-        # Convert BGRA to RGB
-        img = img[:, :, :3]  # Remove alpha channel
-        img = img[:, :, ::-1]  # BGR to RGB
+                # Convert to PIL Image
+                img = Image.frombytes('RGB', screenshot.size, screenshot.bgra, 'raw', 'BGRX')
 
-        # Resize if needed (for performance)
-        if img.shape[1] != self.width or img.shape[0] != self.height:
-            # Simple resize using numpy (faster than PIL for this use case)
-            from PIL import Image
-            pil_img = Image.fromarray(img)
-            pil_img = pil_img.resize((self.width, self.height), Image.Resampling.LANCZOS)
-            img = np.array(pil_img)
+                # Resize if needed
+                if img.width != self.width or img.height != self.height:
+                    img = img.resize((self.width, self.height), Image.Resampling.LANCZOS)
 
-        # Create VideoFrame
-        frame = VideoFrame.from_ndarray(img, format="rgb24")
-        frame.pts = pts
-        frame.time_base = time_base
+                # Encode as JPEG
+                buffer = io.BytesIO()
+                img.save(buffer, format='JPEG', quality=self.quality, optimize=True)
+                frame_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
-        self._frame_count += 1
+                # Send frame
+                try:
+                    await self.ws.send_json({
+                        "type": "frame",
+                        "data": frame_data,
+                        "timestamp": time.time(),
+                        "frame": self.frame_count
+                    })
+                except Exception as e:
+                    logger.error(f"Failed to send frame: {e}")
+                    break
 
-        # Rate limiting - wait to maintain target FPS
-        if self._start_time is None:
-            self._start_time = time.time()
-        else:
-            elapsed = time.time() - self._start_time
-            expected = self._frame_count / self.fps
-            if expected > elapsed:
-                await asyncio.sleep(expected - elapsed)
+                self.frame_count += 1
 
-        return frame
+                # Calculate actual FPS every second
+                if self.frame_count % self.fps == 0:
+                    elapsed = time.time() - self.start_time
+                    actual_fps = self.frame_count / elapsed
+                    logger.info(f"📊 Streaming: {actual_fps:.1f} FPS")
+
+                # Rate limiting
+                elapsed = time.time() - frame_start
+                sleep_time = frame_interval - elapsed
+                if sleep_time > 0:
+                    await asyncio.sleep(sleep_time)
+
+        except asyncio.CancelledError:
+            logger.info("🛑 Stream cancelled")
+        except Exception as e:
+            logger.error(f"❌ Stream error: {e}")
+        finally:
+            self.running = False
+            logger.info(f"📺 Stream ended after {self.frame_count} frames")
+
+    def stop(self):
+        """Stop streaming."""
+        self.running = False
 
 
-async def handle_offer(request):
-    """Handle WebRTC offer from client."""
+async def websocket_handler(request):
+    """Handle WebSocket connections for streaming."""
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    client_id = id(ws)
+    streamer = None
+    logger.info(f'🔌 New screen client: {request.remote}')
+
     try:
-        params = await request.json()
+        async for msg in ws:
+            if msg.type == web.WSMsgType.TEXT:
+                try:
+                    data = json.loads(msg.data)
+                    command = data.get('command')
 
-        # Check authentication
-        password = params.get('password', '')
-        if password != REMOTE_PASSWORD:
-            return web.json_response(
-                {"error": "Authentication failed"},
-                status=401
-            )
+                    # Authentication
+                    if command == 'auth':
+                        password = data.get('password', '')
+                        if password == REMOTE_PASSWORD:
+                            authenticated_clients.add(client_id)
+                            await ws.send_json({"type": "authSuccess"})
+                            logger.info(f'✅ Screen client authenticated: {request.remote}')
+                        else:
+                            await ws.send_json({"type": "authFailed"})
+                            logger.warning(f'❌ Auth failed: {request.remote}')
+                        continue
 
-        offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+                    # Check auth
+                    if client_id not in authenticated_clients:
+                        await ws.send_json({"type": "authRequired"})
+                        continue
 
-        # Create peer connection
-        pc = RTCPeerConnection()
-        peer_connections.add(pc)
+                    # Start streaming
+                    if command == 'startStream':
+                        if streamer and streamer.running:
+                            streamer.stop()
 
-        @pc.on("connectionstatechange")
-        async def on_connectionstatechange():
-            logger.info(f"🔗 Connection state: {pc.connectionState}")
-            if pc.connectionState == "failed" or pc.connectionState == "closed":
-                await pc.close()
-                peer_connections.discard(pc)
+                        width = min(data.get('width', MAX_WIDTH), MAX_WIDTH)
+                        height = min(data.get('height', MAX_HEIGHT), MAX_HEIGHT)
+                        fps = min(data.get('fps', TARGET_FPS), 60)
+                        quality = data.get('quality', QUALITY)
 
-        @pc.on("iceconnectionstatechange")
-        async def on_iceconnectionstatechange():
-            logger.info(f"🧊 ICE state: {pc.iceConnectionState}")
+                        streamer = ScreenStreamer(ws, width, height, fps, quality)
+                        streaming_tasks[client_id] = asyncio.create_task(streamer.start())
 
-        # Get resolution from params (with defaults)
-        width = params.get('width', 1280)
-        height = params.get('height', 720)
-        fps = params.get('fps', 30)
+                        await ws.send_json({
+                            "type": "streamStarted",
+                            "width": width,
+                            "height": height,
+                            "fps": fps
+                        })
 
-        # Add screen capture track
-        screen_track = ScreenCaptureTrack(width=width, height=height, fps=fps)
-        pc.addTrack(screen_track)
+                    # Stop streaming
+                    elif command == 'stopStream':
+                        if streamer:
+                            streamer.stop()
+                        if client_id in streaming_tasks:
+                            streaming_tasks[client_id].cancel()
+                            del streaming_tasks[client_id]
+                        await ws.send_json({"type": "streamStopped"})
 
-        # Set remote description
-        await pc.setRemoteDescription(offer)
+                    # Update settings
+                    elif command == 'setQuality':
+                        if streamer:
+                            streamer.quality = data.get('quality', QUALITY)
 
-        # Create answer
-        answer = await pc.createAnswer()
-        await pc.setLocalDescription(answer)
+                    elif command == 'setFps':
+                        if streamer:
+                            streamer.fps = min(data.get('fps', TARGET_FPS), 60)
 
-        logger.info(f"✅ WebRTC connection established ({width}x{height} @ {fps}fps)")
+                except json.JSONDecodeError:
+                    await ws.send_json({"type": "error", "message": "Invalid JSON"})
 
-        return web.json_response({
-            "sdp": pc.localDescription.sdp,
-            "type": pc.localDescription.type
-        })
+            elif msg.type == web.WSMsgType.ERROR:
+                logger.error(f'❌ WebSocket error: {ws.exception()}')
 
     except Exception as e:
-        logger.error(f"❌ Error handling offer: {e}")
-        return web.json_response({"error": str(e)}, status=500)
+        logger.error(f'❌ Connection error: {e}')
+    finally:
+        # Cleanup
+        if streamer:
+            streamer.stop()
+        if client_id in streaming_tasks:
+            streaming_tasks[client_id].cancel()
+            del streaming_tasks[client_id]
+        authenticated_clients.discard(client_id)
+        logger.info(f'❌ Screen client disconnected: {request.remote}')
+
+    return ws
 
 
 async def handle_index(request):
@@ -164,66 +215,72 @@ async def handle_index(request):
     <head>
         <title>Screen Stream Test</title>
         <style>
-            body { margin: 0; background: #111; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-            video { max-width: 100%; max-height: 100vh; }
+            body { margin: 0; background: #111; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; font-family: sans-serif; }
+            #screen { max-width: 100%; max-height: 80vh; border: 2px solid #333; }
+            .stats { color: #0f0; margin: 10px; font-family: monospace; }
+            button { margin: 5px; padding: 10px 20px; font-size: 16px; cursor: pointer; }
         </style>
     </head>
     <body>
-        <video id="video" autoplay playsinline></video>
+        <img id="screen" alt="Screen stream will appear here">
+        <div class="stats" id="stats">Disconnected</div>
+        <div>
+            <button onclick="startStream()">Start Stream</button>
+            <button onclick="stopStream()">Stop Stream</button>
+        </div>
         <script>
-            const password = prompt('Password:');
+            let ws;
+            let frameCount = 0;
+            let startTime;
 
-            async function start() {
-                const pc = new RTCPeerConnection({
-                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-                });
+            function connect() {
+                const password = prompt('Password:');
+                ws = new WebSocket('ws://' + location.host + '/ws');
 
-                pc.ontrack = (event) => {
-                    document.getElementById('video').srcObject = event.streams[0];
+                ws.onopen = () => {
+                    ws.send(JSON.stringify({ command: 'auth', password }));
                 };
 
-                pc.oniceconnectionstatechange = () => {
-                    console.log('ICE state:', pc.iceConnectionState);
-                };
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
 
-                const offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-
-                // Wait for ICE gathering
-                await new Promise(resolve => {
-                    if (pc.iceGatheringState === 'complete') {
-                        resolve();
-                    } else {
-                        pc.onicegatheringstatechange = () => {
-                            if (pc.iceGatheringState === 'complete') resolve();
-                        };
+                    if (data.type === 'authSuccess') {
+                        document.getElementById('stats').textContent = 'Authenticated - Click Start Stream';
+                    } else if (data.type === 'authFailed') {
+                        alert('Authentication failed');
+                    } else if (data.type === 'frame') {
+                        document.getElementById('screen').src = 'data:image/jpeg;base64,' + data.data;
+                        frameCount++;
+                        if (!startTime) startTime = Date.now();
+                        const elapsed = (Date.now() - startTime) / 1000;
+                        const fps = frameCount / elapsed;
+                        document.getElementById('stats').textContent = `FPS: ${fps.toFixed(1)} | Frames: ${frameCount}`;
+                    } else if (data.type === 'streamStarted') {
+                        frameCount = 0;
+                        startTime = null;
+                        document.getElementById('stats').textContent = 'Stream started...';
                     }
-                });
+                };
 
-                const response = await fetch('/offer', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        sdp: pc.localDescription.sdp,
-                        type: pc.localDescription.type,
-                        password: password,
-                        width: 1280,
-                        height: 720,
-                        fps: 30
-                    })
-                });
-
-                const answer = await response.json();
-                if (answer.error) {
-                    alert('Error: ' + answer.error);
-                    return;
-                }
-
-                await pc.setRemoteDescription(answer);
-                console.log('Connected!');
+                ws.onclose = () => {
+                    document.getElementById('stats').textContent = 'Disconnected';
+                    setTimeout(connect, 2000);
+                };
             }
 
-            start();
+            function startStream() {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ command: 'startStream', width: 1280, height: 720, fps: 30, quality: 60 }));
+                }
+            }
+
+            function stopStream() {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ command: 'stopStream' }));
+                }
+            }
+
+            connect();
         </script>
     </body>
     </html>
@@ -235,43 +292,41 @@ async def handle_health(request):
     """Health check endpoint."""
     return web.json_response({
         "status": "ok",
-        "connections": len(peer_connections),
-        "fps": TARGET_FPS
+        "clients": len(authenticated_clients),
+        "streams": len(streaming_tasks),
+        "target_fps": TARGET_FPS
     })
 
 
 async def on_shutdown(app):
     """Cleanup on shutdown."""
-    # Close all peer connections
-    coros = [pc.close() for pc in peer_connections]
-    await asyncio.gather(*coros)
-    peer_connections.clear()
-    logger.info("🧹 All connections closed")
+    for task in streaming_tasks.values():
+        task.cancel()
+    streaming_tasks.clear()
+    logger.info("🧹 All streams stopped")
 
 
 async def main():
     app = web.Application()
     app.on_shutdown.append(on_shutdown)
 
-    # Enable CORS for all origins
-    async def cors_middleware(app, handler):
-        async def middleware_handler(request):
-            if request.method == "OPTIONS":
-                response = web.Response()
-            else:
-                response = await handler(request)
-
-            response.headers["Access-Control-Allow-Origin"] = "*"
-            response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-            response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-            return response
-        return middleware_handler
+    # CORS middleware
+    @web.middleware
+    async def cors_middleware(request, handler):
+        if request.method == "OPTIONS":
+            response = web.Response()
+        else:
+            response = await handler(request)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return response
 
     app.middlewares.append(cors_middleware)
 
     # Routes
     app.router.add_get('/', handle_index)
-    app.router.add_post('/offer', handle_offer)
+    app.router.add_get('/ws', websocket_handler)
     app.router.add_get('/health', handle_health)
 
     runner = web.AppRunner(app)
@@ -281,17 +336,18 @@ async def main():
 
     print(f"""
 ╔════════════════════════════════════════════════════════════╗
-║      🖥️  Screen Streaming Server (WebRTC)                  ║
+║      🖥️  Screen Streaming Server (WebSocket + MJPEG)       ║
 ╚════════════════════════════════════════════════════════════╝
 
 🔐 Password: {REMOTE_PASSWORD}
 📺 Test page: http://localhost:{PORT}
-🔌 WebRTC endpoint: http://localhost:{PORT}/offer
+🔌 WebSocket: ws://localhost:{PORT}/ws
 
-💡 This server runs separately from the main control server.
-   Start both for full functionality:
-   - python server.py (port 8080) - Controls
-   - python screen_server.py (port 8081) - Screen streaming
+📊 Settings: {MAX_WIDTH}x{MAX_HEIGHT} @ {TARGET_FPS}fps (JPEG quality: {QUALITY})
+
+💡 Run both servers:
+   python server.py          (port 8080 - controls)
+   python screen_server.py   (port 8081 - screen)
 
 Press Ctrl+C to stop
 """)

@@ -82,11 +82,13 @@ export default function Home() {
   const handleQrScan = (result: { rawValue: string }[]) => {
     if (result && result.length > 0) {
       let url = result[0].rawValue;
-      // Remove protocol if present
+      // Remove protocol, whitespace, and trailing slashes
       url = url
+        .trim()
         .replace(/^https?:\/\//, "")
         .replace(/\/$/, "")
-        .replace("/ws", "");
+        .replace("/ws", "")
+        .trim();
       setServerUrl(url);
       saveConnection(url);
       setShowScanner(false);
