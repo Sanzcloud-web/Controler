@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
 HTTP + WebSocket server for Video Remote Controller using aiohttp
-With QR code, password auth, and tunnel support
+With QR code, password auth, and ngrok support
 """
 import asyncio
 import socket
 import json
 import subprocess
 import os
+import aiohttp
 from pathlib import Path
 from aiohttp import web
 import logging
@@ -20,6 +21,7 @@ load_dotenv()
 
 PORT = 8080
 REMOTE_PASSWORD = os.getenv('REMOTE_PASSWORD', 'changeme')
+NGROK_URL = None  # Will be set when ngrok is detected
 
 # Track authenticated sessions
 authenticated_clients = set()
@@ -366,6 +368,41 @@ def get_local_ip() -> str:
         return "127.0.0.1"
 
 
+async def get_ngrok_url() -> str | None:
+    """Get ngrok public URL from local API"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get('http://127.0.0.1:4040/api/tunnels', timeout=aiohttp.ClientTimeout(total=2)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    tunnels = data.get('tunnels', [])
+                    for tunnel in tunnels:
+                        if tunnel.get('proto') == 'https':
+                            return tunnel.get('public_url')
+                        elif tunnel.get('proto') == 'http':
+                            # Convert http to https
+                            url = tunnel.get('public_url', '')
+                            return url.replace('http://', 'https://')
+    except:
+        pass
+    return None
+
+
+async def wait_for_ngrok(max_wait: int = 30) -> str | None:
+    """Wait for ngrok to start and return the URL"""
+    global NGROK_URL
+    print("⏳ Waiting for ngrok tunnel...")
+
+    for i in range(max_wait):
+        url = await get_ngrok_url()
+        if url:
+            NGROK_URL = url
+            return url
+        await asyncio.sleep(1)
+
+    return None
+
+
 async def main():
     app = web.Application()
 
@@ -378,6 +415,11 @@ async def main():
     ip = get_local_ip()
     local_url = f'http://{ip}:{PORT}'
 
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+
     print(f"""
 ╔════════════════════════════════════════════════════════════╗
 ║      📺 Video Remote Controller Server                     ║
@@ -385,30 +427,40 @@ async def main():
 
 🔐 Password: {REMOTE_PASSWORD}
 
-✅ Server: {local_url}
+✅ Local: {local_url}
 🔌 WebSocket: ws://{ip}:{PORT}/ws
-
-📱 Scan QR code to connect:
 """)
 
-    print_qr_code(local_url)
+    # Try to detect ngrok
+    ngrok_url = await get_ngrok_url()
 
-    print(f"""
-⚠️  Same WiFi required for local mode
+    if ngrok_url:
+        print(f"""
+🌍 ngrok detected!
+🔗 Public URL: {ngrok_url}
 
-🌍 For remote access with STABLE URL, run in another terminal:
-   tailscale funnel {PORT}
+📱 Scan QR code to connect from anywhere:
+""")
+        print_qr_code(ngrok_url)
+        print(f"""
+🌐 Vercel Frontend: https://smart-remote-bay.vercel.app
+   → Enter this URL: {ngrok_url.replace('https://', '')}
+""")
+    else:
+        print("""
+⏳ ngrok not detected yet...
+   Run in another terminal: ngrok http 8080
 
-   This gives you a permanent URL like:
-   https://your-machine.tailnet-name.ts.net
+📱 Local QR code (same WiFi only):
+""")
+        print_qr_code(local_url)
 
+        # Start background task to detect ngrok
+        asyncio.create_task(watch_for_ngrok())
+
+    print("""
 Press Ctrl+C to stop the server
 """)
-
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', PORT)
-    await site.start()
 
     logger.info(f'🚀 Server started on port {PORT}')
 
@@ -418,6 +470,31 @@ Press Ctrl+C to stop the server
         print("\n\n✋ Server stopped")
     finally:
         await runner.cleanup()
+
+
+async def watch_for_ngrok():
+    """Background task to detect ngrok when it starts"""
+    global NGROK_URL
+    while not NGROK_URL:
+        url = await get_ngrok_url()
+        if url:
+            NGROK_URL = url
+            print(f"""
+╔════════════════════════════════════════════════════════════╗
+║      🌍 ngrok CONNECTED!                                   ║
+╚════════════════════════════════════════════════════════════╝
+
+🔗 Public URL: {url}
+
+📱 Scan QR code to connect from anywhere:
+""")
+            print_qr_code(url)
+            print(f"""
+🌐 Vercel Frontend: https://smart-remote-bay.vercel.app
+   → Enter this URL: {url.replace('https://', '')}
+""")
+            break
+        await asyncio.sleep(2)
 
 
 if __name__ == "__main__":
