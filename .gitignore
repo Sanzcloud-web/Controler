@@ -39,3 +39,4 @@ out/
 # Build output
 app/
 release/
+.vercel
